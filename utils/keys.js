@@ -50,6 +50,10 @@ function generateOrdersCompleteByUserKey(userId) {
   return `users:${userId}:orders:complete`;
 }
 
+function generateOrdersCancelledByUserKey(userId) {
+  return `users:${userId}:orders:cancelled`;
+}
+
 function generateUsersWishlistKey(userId) {
   return `users:${userId}:wishlist`;
 }
@@ -74,4 +78,5 @@ module.exports = {
   generateOrdersCompleteByUserKey,
   generateUsersWishlistKey,
   generateExpirationKey,
+  generateOrdersCancelledByUserKey,
 };

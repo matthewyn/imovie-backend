@@ -67,6 +67,7 @@ const releaseSeatsScript = `
   redis.call("HSET", KEYS[1], "seats", cjson.encode(seats))
 
   redis.call("SREM", KEYS[2], ARGV[2])
+  redis.call("SADD", KEYS[4], ARGV[2])
 
   local statusJson = redis.call("HGET", KEYS[3], "status")
 

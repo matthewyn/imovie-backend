@@ -3,6 +3,7 @@ const { releaseSeatsScript } = require("../utils/scripts");
 const {
   generateOrdersPendingByUserKey,
   generateOrdersKey,
+  generateOrdersCancelledByUserKey,
 } = require("../utils/keys");
 
 const client = createClient({
@@ -37,6 +38,7 @@ const connectRedis = async () => {
         timeslotKey,
         generateOrdersPendingByUserKey(userId),
         generateOrdersKey(orderId),
+        generateOrdersCancelledByUserKey(userId),
       ],
       arguments: [JSON.stringify(seats), orderId, Date.now().toString()],
     });

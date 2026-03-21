@@ -10,6 +10,7 @@ const {
   generateOrdersPendingByUserKey,
   generateOrdersCompleteByUserKey,
   generateExpirationKey,
+  generateOrdersCancelledByUserKey,
 } = require("../utils/keys");
 const authMiddleware = require("../middlewares/auth");
 const { DateTime } = require("luxon");
@@ -151,6 +152,66 @@ router.get("/confirmed", authMiddleware, async (req, res) => {
     const orderCount = await client.sCard(generateOrdersCompleteByUserKey(id));
     const totalPages = Math.ceil(orderCount / limit);
     let result = await client.sort(generateOrdersCompleteByUserKey(id), {
+      BY: "nosort",
+      GET: [
+        "#",
+        `${generateOrdersKey("*")}->seats`,
+        `${generateOrdersKey("*")}->jam`,
+        `${generateOrdersKey("*")}->studio`,
+        `${generateOrdersKey("*")}->judul`,
+        `${generateOrdersKey("*")}->status`,
+        `${generateOrdersKey("*")}->totalPrice`,
+        `${generateOrdersKey("*")}->filePath`,
+        `${generateOrdersKey("*")}->snacks`,
+      ],
+      LIMIT: {
+        offset: (page - 1) * limit,
+        count: limit,
+      },
+      DIRECTION: "DESC",
+    });
+    const orders = [];
+    while (result.length) {
+      const [
+        id,
+        seats,
+        jam,
+        studio,
+        judul,
+        status,
+        totalPrice,
+        filePath,
+        snacks,
+        ...rest
+      ] = result;
+      const item = deserialize(id, {
+        seats,
+        jam,
+        studio,
+        judul,
+        status,
+        totalPrice,
+        filePath,
+        snacks,
+      });
+      orders.push(item);
+      result = rest;
+    }
+    res.status(200).json({ orders, totalPages });
+  } catch (error) {
+    console.error("Error fetching pending payment orders:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+router.get("/cancelled", authMiddleware, async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 0;
+    const limit = parseInt(req.query.limit) || 10;
+    const id = req.user.userId;
+    const orderCount = await client.sCard(generateOrdersCancelledByUserKey(id));
+    const totalPages = Math.ceil(orderCount / limit);
+    let result = await client.sort(generateOrdersCancelledByUserKey(id), {
       BY: "nosort",
       GET: [
         "#",
