@@ -54,8 +54,8 @@ function generateUsersWishlistKey(userId) {
   return `users:${userId}:wishlist`;
 }
 
-function generateLockTimeslotsKey(millis, movieId) {
-  return `lock:timeslots:${millis}:${movieId}`;
+function generateExpirationKey(orderId) {
+  return `reservation:${orderId}`;
 }
 
 module.exports = {
@@ -73,5 +73,5 @@ module.exports = {
   generateOrdersPendingByUserKey,
   generateOrdersCompleteByUserKey,
   generateUsersWishlistKey,
-  generateLockTimeslotsKey,
+  generateExpirationKey,
 };

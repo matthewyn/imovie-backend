@@ -9,27 +9,27 @@ const {
   generateTimeslotsKey,
   generateOrdersPendingByUserKey,
   generateOrdersCompleteByUserKey,
-  generateLockTimeslotsKey,
+  generateExpirationKey,
 } = require("../utils/keys");
 const authMiddleware = require("../middlewares/auth");
 const { DateTime } = require("luxon");
 const genId = require("../utils/genId");
-const { default: Redlock } = require("redlock");
+const {
+  reserveSeatsScript,
+  confirmPaymentScript,
+} = require("../utils/scripts");
 
 const PENDING_PAYMENT = "pending-payment";
 const CONFIRMED_PAYMENT = "confirmed";
-const LOCK_TTL = 4000;
-
-const redlock = new Redlock([client], {
-  retryCount: 4,
-  retryDelay: 200,
-});
+const EXPIRATION_TIME = 20 * 60 * 1000;
 
 router.get("/", authMiddleware, async (req, res) => {
   try {
-    const offset = parseInt(req.query.offset) || 0;
+    const page = parseInt(req.query.page) || 0;
     const limit = parseInt(req.query.limit) || 10;
     const id = req.user.userId;
+    const orderCount = await client.sCard(generateUsersOrderKey(id));
+    const totalPages = Math.ceil(orderCount / limit);
     let result = await client.sort(generateUsersOrderKey(id), {
       BY: "nosort",
       GET: [
@@ -44,7 +44,7 @@ router.get("/", authMiddleware, async (req, res) => {
         `${generateOrdersKey("*")}->snacks`,
       ],
       LIMIT: {
-        offset,
+        offset: (page - 1) * limit,
         count: limit,
       },
       DIRECTION: "DESC",
@@ -76,7 +76,7 @@ router.get("/", authMiddleware, async (req, res) => {
       orders.push(item);
       result = rest;
     }
-    res.status(200).json(orders);
+    res.status(200).json({ orders, totalPages });
   } catch (error) {
     console.error("Error fetching orders:", error);
     res.status(500).json({ message: "Internal server error" });
@@ -85,7 +85,11 @@ router.get("/", authMiddleware, async (req, res) => {
 
 router.get("/pending-payment", authMiddleware, async (req, res) => {
   try {
+    const page = parseInt(req.query.page) || 0;
+    const limit = parseInt(req.query.limit) || 10;
     const id = req.user.userId;
+    const orderCount = await client.sCard(generateOrdersPendingByUserKey(id));
+    const totalPages = Math.ceil(orderCount / limit);
     let result = await client.sort(generateOrdersPendingByUserKey(id), {
       BY: "nosort",
       GET: [
@@ -99,6 +103,11 @@ router.get("/pending-payment", authMiddleware, async (req, res) => {
         `${generateOrdersKey("*")}->filePath`,
         `${generateOrdersKey("*")}->snacks`,
       ],
+      LIMIT: {
+        offset: (page - 1) * limit,
+        count: limit,
+      },
+      DIRECTION: "DESC",
     });
     const orders = [];
     while (result.length) {
@@ -127,7 +136,7 @@ router.get("/pending-payment", authMiddleware, async (req, res) => {
       orders.push(item);
       result = rest;
     }
-    res.status(200).json(orders);
+    res.status(200).json({ orders, totalPages });
   } catch (error) {
     console.error("Error fetching pending payment orders:", error);
     res.status(500).json({ message: "Internal server error" });
@@ -136,7 +145,11 @@ router.get("/pending-payment", authMiddleware, async (req, res) => {
 
 router.get("/confirmed", authMiddleware, async (req, res) => {
   try {
+    const page = parseInt(req.query.page) || 0;
+    const limit = parseInt(req.query.limit) || 10;
     const id = req.user.userId;
+    const orderCount = await client.sCard(generateOrdersCompleteByUserKey(id));
+    const totalPages = Math.ceil(orderCount / limit);
     let result = await client.sort(generateOrdersCompleteByUserKey(id), {
       BY: "nosort",
       GET: [
@@ -150,6 +163,11 @@ router.get("/confirmed", authMiddleware, async (req, res) => {
         `${generateOrdersKey("*")}->filePath`,
         `${generateOrdersKey("*")}->snacks`,
       ],
+      LIMIT: {
+        offset: (page - 1) * limit,
+        count: limit,
+      },
+      DIRECTION: "DESC",
     });
     const orders = [];
     while (result.length) {
@@ -178,7 +196,7 @@ router.get("/confirmed", authMiddleware, async (req, res) => {
       orders.push(item);
       result = rest;
     }
-    res.status(200).json(orders);
+    res.status(200).json({ orders, totalPages });
   } catch (error) {
     console.error("Error fetching pending payment orders:", error);
     res.status(500).json({ message: "Internal server error" });
@@ -201,36 +219,31 @@ router.get("/:id", authMiddleware, async (req, res) => {
 });
 
 router.post("/", authMiddleware, async (req, res) => {
-  let lock;
   try {
     const db = getDB();
     let { idMovie, seats, selectedTime, studio, judul, totalPrice, filePath } =
       req.body;
     const { userId, email } = req.user;
-    const isPending = await client.sMembers(
+    const hasPending = await client.exists(
       generateOrdersPendingByUserKey(userId),
     );
-    if (isPending.length > 0) {
+    if (hasPending) {
       return res
         .status(400)
         .json({ message: "You have pending payment orders" });
     }
-    lock = await redlock.acquire(
-      [generateLockTimeslotsKey(selectedTime, idMovie)],
-      LOCK_TTL,
-    );
     const id = genId();
     const ISOTime = DateTime.fromMillis(selectedTime).toUTC().toISO();
-    const currentSeats = JSON.parse(
-      await client.hGet(generateTimeslotsKey(selectedTime, idMovie), "seats"),
-    );
-    seats.forEach((seat) => {
-      const [row, col] = seatLabelToIndex(seat);
-      if (currentSeats[row][col] === 0) {
-        throw new Error(`Seat ${seat} is already booked`);
-      }
-      currentSeats[row][col] = 0;
+    const result = await client.eval(reserveSeatsScript, {
+      keys: [
+        generateTimeslotsKey(selectedTime, idMovie),
+        generateExpirationKey(id),
+      ],
+      arguments: [JSON.stringify(seats), EXPIRATION_TIME.toString(), userId],
     });
+    if (!result) {
+      return res.status(400).json({ message: "Some seats are already booked" });
+    }
     await Promise.all([
       db.collection("users").updateOne(
         { email: email },
@@ -250,15 +263,14 @@ router.post("/", authMiddleware, async (req, res) => {
               ],
               totalPrice,
               filePath,
+              idMovie,
               snacks: [],
+              paymentDeadline: new Date(
+                Date.now() + EXPIRATION_TIME,
+              ).toISOString(),
             },
           },
         },
-      ),
-      client.hSet(
-        generateTimeslotsKey(selectedTime, idMovie),
-        "seats",
-        JSON.stringify(currentSeats),
       ),
       client.hSet(
         generateOrdersKey(id),
@@ -275,7 +287,11 @@ router.post("/", authMiddleware, async (req, res) => {
           ]),
           totalPrice,
           filePath,
+          idMovie,
           snacks: [],
+          paymentDeadline: DateTime.now()
+            .plus({ milliseconds: EXPIRATION_TIME })
+            .toMillis(),
         }),
       ),
       client.sAdd(generateUsersOrderKey(userId), id),
@@ -291,7 +307,7 @@ router.post("/", authMiddleware, async (req, res) => {
         },
         {
           $set: {
-            "schedules.$.studio.seats": currentSeats,
+            "schedules.$.studio.seats": JSON.parse(result),
           },
         },
       ),
@@ -300,65 +316,53 @@ router.post("/", authMiddleware, async (req, res) => {
   } catch (error) {
     console.error("Error creating order:", error);
     res.status(500).json({ message: "Internal server error" });
-  } finally {
-    if (lock) {
-      await lock.release().catch((err) => {
-        console.error("Error releasing lock:", err);
-      });
-    }
   }
 });
 
 router.post("/confirm-payment/:id", authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
-    const { snacks, totalPrice } = req.body;
+    const { idMovie, selectedTime, seats, snacks, totalPrice } = req.body;
     const { userId, email } = req.user;
     const db = getDB();
-    let currentStatus = JSON.parse(
-      await client.hGet(generateOrdersKey(id), "status"),
-    );
-    currentStatus.push({
-      tipe: CONFIRMED_PAYMENT,
-      createdAt: DateTime.now().toMillis(),
+    await client.eval(confirmPaymentScript, {
+      keys: [
+        generateTimeslotsKey(selectedTime, idMovie),
+        generateOrdersKey(id),
+        generateOrdersPendingByUserKey(userId),
+        generateOrdersCompleteByUserKey(userId),
+        generateExpirationKey(id),
+        generateExpirationKey(id) + ":data",
+      ],
+      arguments: [
+        JSON.stringify(seats),
+        id,
+        Date.now().toString(),
+        JSON.stringify(snacks),
+        totalPrice.toString(),
+      ],
     });
-    await Promise.all([
-      db.collection("users").updateOne(
-        { email: email, "orders.id": id },
-        {
-          $push: {
-            "orders.$.status": {
-              tipe: CONFIRMED_PAYMENT,
-              createdAt: new Date().toISOString(),
-            },
-          },
-          $set: {
-            "orders.$.snacks": snacks,
-            "orders.$.totalPrice": totalPrice,
+    await db.collection("users").updateOne(
+      { email: email, "orders.id": id },
+      {
+        $push: {
+          "orders.$.status": {
+            tipe: CONFIRMED_PAYMENT,
+            createdAt: new Date().toISOString(),
           },
         },
-      ),
-      client.hSet(generateOrdersKey(id), {
-        status: JSON.stringify(currentStatus),
-        snacks: JSON.stringify(snacks),
-      }),
-      client.sRem(generateOrdersPendingByUserKey(userId), id),
-      client.sAdd(generateOrdersCompleteByUserKey(userId), id),
-    ]);
+        $set: {
+          "orders.$.snacks": snacks,
+          "orders.$.totalPrice": totalPrice,
+        },
+      },
+    );
     res.status(201).json({ message: "Payment confirmed successfully" });
   } catch (error) {
     console.error("Error confirming payment:", error);
     res.status(500).json({ message: "Internal server error" });
   }
 });
-
-function seatLabelToIndex(label) {
-  const [rowLetter, col] = label.split("-");
-  const row = rowLetter.charCodeAt(0) - 65;
-  const colIndex = parseInt(col) - 1;
-
-  return [row, colIndex];
-}
 
 function serialize(order) {
   return {
@@ -376,7 +380,8 @@ function deserialize(id, order) {
     jam: parseInt(order.jam),
     totalPrice: parseFloat(order.totalPrice),
     status: JSON.parse(order.status),
-    snacks: order.snacks ? JSON.parse(order.snacks) : null,
+    snacks: JSON.parse(order.snacks),
+    paymentDeadline: parseInt(order.paymentDeadline),
   };
 }
 
