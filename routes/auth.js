@@ -55,7 +55,7 @@ router.post("/login", async (req, res) => {
     res.cookie("sessionId", sessionId, {
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",
-      sameSite: "lax",
+      sameSite: "none",
     });
     res.json({ message: "Login successful" });
   } catch (error) {
