@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const { getDB } = require("../dbs/mongo");
-const { generateUploadURL } = require("../utils/upload");
+const { uploadToCloudinary } = require("../utils/upload");
 const { capitalizeFirstLetter } = require("../utils/string");
 const { client } = require("../dbs/redis");
 const {
@@ -150,13 +150,19 @@ router.post("/", async (req, res) => {
     const durasi = parseInt(jam) * 60 + parseInt(menit);
     const file = req.file;
     const db = getDB();
+
+    let filePath = null;
+    if (file) {
+      filePath = await uploadToCloudinary(file);
+    }
+
     const result = await db.collection("movies").insertOne({
       judul,
       sinopsis,
       genre: capitalizeFirstLetter(genre),
       durasi,
       kategoriUmur,
-      filePath: file ? generateUploadURL(file.filename) : null,
+      filePath,
       originalFileName: file ? file.originalname : null,
       runtime,
       schedules: [],
@@ -171,7 +177,7 @@ router.post("/", async (req, res) => {
         genre: capitalizeFirstLetter(genre),
         durasi,
         kategoriUmur,
-        filePath: file ? generateUploadURL(file.filename) : null,
+        filePath,
         originalFileName: file ? file.originalname : null,
         runtime,
         videoUrl: video,

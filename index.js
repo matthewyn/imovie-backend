@@ -15,7 +15,7 @@ const cookieParser = require("cookie-parser");
 
 server = http.createServer(app);
 
-const upload = multer({ dest: "uploads/" });
+const upload = multer({ storage: multer.memoryStorage() });
 
 app.use(
   cors({
