@@ -22,7 +22,7 @@ const {
 
 const PENDING_PAYMENT = "pending-payment";
 const CONFIRMED_PAYMENT = "confirmed";
-const EXPIRATION_TIME = 2 * 60 * 1000;
+const EXPIRATION_TIME = 15 * 60 * 1000;
 
 router.get("/", authMiddleware, async (req, res) => {
   try {
