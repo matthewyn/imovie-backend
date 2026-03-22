@@ -11,6 +11,18 @@ const {
 } = require("../utils/keys");
 const genId = require("../utils/genId");
 const authMiddleware = require("../middlewares/auth");
+const z = require("zod");
+
+const loginSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(6),
+});
+
+const signupSchema = z.object({
+  username: z.string().min(2).max(100),
+  email: z.string().email(),
+  password: z.string().min(6),
+});
 
 router.get("/me", authMiddleware, async (req, res) => {
   res.json({ user: req.user });
@@ -19,6 +31,10 @@ router.get("/me", authMiddleware, async (req, res) => {
 router.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
+    const { success } = loginSchema.safeParse({ email, password });
+    if (!success) {
+      return res.status(400).json({ message: "Invalid input data" });
+    }
     const decimalId = await client.zScore(generateEmailsKey(), email);
     if (!decimalId) {
       return res.status(400).json({ message: "Invalid email or password" });
@@ -33,6 +49,7 @@ router.post("/login", async (req, res) => {
       userId: decimalId.toString(16),
       username: user.username,
       email: user.email,
+      role: user.role,
     });
     await client.expire(generateSessionsKey(sessionId), 60 * 60 * 24);
     res.cookie("sessionId", sessionId, {
@@ -49,6 +66,12 @@ router.post("/login", async (req, res) => {
 
 router.post("/signup", async (req, res) => {
   const { username, email, password } = req.body;
+
+  const { success } = signupSchema.safeParse({ username, email, password });
+  if (!success) {
+    return res.status(400).json({ message: "Invalid input data" });
+  }
+
   if (!username || !email || !password) {
     return res
       .status(400)
@@ -68,11 +91,12 @@ router.post("/signup", async (req, res) => {
     await Promise.all([
       db
         .collection("users")
-        .insertOne({ username, email, password: hashedPassword }),
+        .insertOne({ username, email, password: hashedPassword, role: "user" }),
       client.hSet(generateUsersKey(id), {
         username,
         email,
         password: hashedPassword,
+        role: "user",
       }),
       client.zAdd(generateEmailsKey(), {
         score: parseInt(id, 16),
