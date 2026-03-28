@@ -1,5 +1,4 @@
 const express = require("express");
-const router = express.Router();
 const bcrypt = require("bcrypt");
 const { getDB } = require("../dbs/mongo");
 const { client } = require("../dbs/redis");
@@ -12,6 +11,9 @@ const {
 const genId = require("../utils/genId");
 const authMiddleware = require("../middlewares/auth");
 const z = require("zod");
+const jwt = require("jsonwebtoken");
+
+const router = express.Router();
 
 const loginSchema = z.object({
   email: z.string().email(),
@@ -44,20 +46,17 @@ router.post("/login", async (req, res) => {
     if (!passwordMatch) {
       return res.status(400).json({ message: "Invalid email or password" });
     }
-    const sessionId = genId();
-    await client.hSet(generateSessionsKey(sessionId), {
-      userId: decimalId.toString(16),
-      username: user.username,
-      email: user.email,
-      role: user.role,
-    });
-    await client.expire(generateSessionsKey(sessionId), 60 * 60 * 24);
-    res.cookie("sessionId", sessionId, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "none",
-    });
-    res.json({ message: "Login successful" });
+    const token = jwt.sign(
+      {
+        userId: decimalId.toString(16),
+        username: user.username,
+        email: user.email,
+        role: user.role,
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: "24h" },
+    );
+    res.json({ message: "Login successful", token });
   } catch (error) {
     console.error("Error during login:", error);
     res.status(500).json({ message: "Internal server error" });
@@ -104,25 +103,27 @@ router.post("/signup", async (req, res) => {
       }),
       client.sAdd(generateEmailsUniqueKey(), email),
     ]);
-    res.status(201).json({ message: "User created successfully", id });
+    const token = jwt.sign(
+      {
+        userId: id,
+        username,
+        email,
+        role: "user",
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: "24h" },
+    );
+    res.status(201).json({ message: "User created successfully", token });
   } catch (error) {
     console.error("Error creating user:", error);
     res.status(500).json({ message: "Internal server error" });
   }
 });
 
-router.post("/logout", async (req, res) => {
-  try {
-    const sessionId = req.cookies.sessionId;
-    if (sessionId) {
-      await client.del(generateSessionsKey(sessionId));
-      res.clearCookie("sessionId");
-    }
-    res.status(200).json({ message: "Logout successful" });
-  } catch (error) {
-    console.error("Error during logout:", error);
-    res.status(500).json({ message: "Internal server error" });
-  }
+router.post("/logout", authMiddleware, (req, res) => {
+  res.json({
+    message: "Logout successful. Please discard the token on the client side.",
+  });
 });
 
 module.exports = router;

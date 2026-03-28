@@ -11,7 +11,6 @@ const ordersRouter = require("./routes/orders");
 const wishlistsRouter = require("./routes/wishlists");
 const { connectDB } = require("./dbs/mongo");
 const { connectRedis } = require("./dbs/redis");
-const cookieParser = require("cookie-parser");
 
 server = http.createServer(app);
 
@@ -28,10 +27,8 @@ app.use(
     allowedHeaders: ["Content-Type", "Authorization"],
   }),
 );
-app.use(cookieParser());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use("/uploads", express.static("uploads"));
 
 app.use("/api/movies", upload.single("file"), moviesRouter);
 app.use("/api/studios", studiosRouter);

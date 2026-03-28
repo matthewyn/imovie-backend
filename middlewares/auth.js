@@ -1,29 +1,19 @@
-const { client } = require("../dbs/redis");
-const { generateSessionsKey } = require("../utils/keys");
+const jwt = require("jsonwebtoken");
 
-async function authMiddleware(req, res, next) {
+function authMiddleware(req, res, next) {
   try {
-    const sessionId = req.cookies.sessionId;
-    if (!sessionId) {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
       return res.status(401).json({ message: "Unauthorized" });
     }
-    const session = await client.hGetAll(generateSessionsKey(sessionId));
-    if (Object.keys(session).length === 0) {
-      return res.status(401).json({ message: "Unauthorized" });
-    }
-    req.user = deserialize(sessionId, session);
+    const token = authHeader.slice(7);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded;
     next();
   } catch (error) {
-    console.error("Authentication error:", error);
-    res.status(500).json({ message: "Internal server error" });
+    console.error("Authentication error:", error.message);
+    res.status(401).json({ message: "Unauthorized" });
   }
-}
-
-function deserialize(id, session) {
-  return {
-    id,
-    ...session,
-  };
 }
 
 module.exports = authMiddleware;
