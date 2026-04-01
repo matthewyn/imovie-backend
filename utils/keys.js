@@ -62,6 +62,10 @@ function generateExpirationKey(orderId) {
   return `reservation:${orderId}`;
 }
 
+function generateNotifyKey(orderId) {
+  return `notify:${orderId}`;
+}
+
 module.exports = {
   generateMoviesKey,
   generateMoviesByRatingKey,
@@ -79,4 +83,5 @@ module.exports = {
   generateUsersWishlistKey,
   generateExpirationKey,
   generateOrdersCancelledByUserKey,
+  generateNotifyKey,
 };

@@ -30,6 +30,8 @@ router.get("/", async (req, res) => {
         `${generateMoviesKey("*")}->kategoriUmur`,
         `${generateMoviesKey("*")}->filePath`,
         `${generateMoviesKey("*")}->videoUrl`,
+        `${generateMoviesKey("*")}->rating`,
+        `${generateMoviesKey("*")}->ratingCount`,
       ],
     });
     let upcoming = await client.sort(generateMoviesKey(UPCOMING), {
@@ -42,6 +44,8 @@ router.get("/", async (req, res) => {
         `${generateMoviesKey("*")}->kategoriUmur`,
         `${generateMoviesKey("*")}->filePath`,
         `${generateMoviesKey("*")}->videoUrl`,
+        `${generateMoviesKey("*")}->rating`,
+        `${generateMoviesKey("*")}->ratingCount`,
       ],
       LIMIT: {
         offset,
@@ -59,6 +63,8 @@ router.get("/", async (req, res) => {
         kategoriUmur,
         filePath,
         videoUrl,
+        rating,
+        ratingCount,
         ...rest
       ] = nowPlaying;
       const item = deserialize(id, {
@@ -68,6 +74,8 @@ router.get("/", async (req, res) => {
         kategoriUmur,
         filePath,
         videoUrl,
+        rating,
+        ratingCount,
       });
       nowPlayingMovies.push(item);
       nowPlaying = rest;
@@ -81,6 +89,8 @@ router.get("/", async (req, res) => {
         kategoriUmur,
         filePath,
         videoUrl,
+        rating,
+        ratingCount,
         ...rest
       ] = upcoming;
       const item = deserialize(id, {
@@ -90,6 +100,8 @@ router.get("/", async (req, res) => {
         kategoriUmur,
         filePath,
         videoUrl,
+        rating,
+        ratingCount,
       });
       upcomingMovies.push(item);
       upcoming = rest;
@@ -200,13 +212,19 @@ router.post("/", async (req, res) => {
 });
 
 function deserialize(id, movie) {
+  let averageRating = 0;
+  if (parseInt(movie.ratingCount) > 0) {
+    averageRating = parseFloat(movie.rating) / parseInt(movie.ratingCount);
+  }
   return {
     id,
     judul: movie.judul,
     sinopsis: movie.sinopsis,
     genre: movie.genre,
     durasi: parseInt(movie.durasi),
-    kategoriUmur: movie.kategoriUmur,
+    averageRating,
+    ratingCount: parseInt(movie.ratingCount) || 0,
+    kategoriUmur: movie.kategoriUmur.toUpperCase(),
     filePath: movie.filePath,
     videoUrl: movie.videoUrl,
   };

@@ -1,5 +1,6 @@
 const express = require("express");
 const http = require("http");
+const admin = require("firebase-admin");
 const app = express();
 const cors = require("cors");
 const multer = require("multer");
@@ -9,8 +10,16 @@ const schedulesRouter = require("./routes/schedules");
 const authRouter = require("./routes/auth");
 const ordersRouter = require("./routes/orders");
 const wishlistsRouter = require("./routes/wishlists");
+const notificationsRouter = require("./routes/notifications");
+const reviewsRouter = require("./routes/reviews");
 const { connectDB } = require("./dbs/mongo");
 const { connectRedis } = require("./dbs/redis");
+
+const serviceAccount = require("./serviceAccountKey.json");
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
 
 server = http.createServer(app);
 
@@ -36,6 +45,8 @@ app.use("/api/schedules", schedulesRouter);
 app.use("/api/auth", authRouter);
 app.use("/api/orders", ordersRouter);
 app.use("/api/wishlists", wishlistsRouter);
+app.use("/api/notifications", notificationsRouter);
+app.use("/api/reviews", reviewsRouter);
 
 Promise.all([connectDB(), connectRedis()]).then(() => {
   server.listen(3000, () => {

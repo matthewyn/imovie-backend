@@ -7,7 +7,9 @@ const reserveSeatsScript = `
   local seats = cjson.decode(seatsJson)
   local requestedSeats = cjson.decode(ARGV[1])
   local ttl = tonumber(ARGV[2])
-  local userId = ARGV[3]
+  local notifyTtl = tonumber(ARGV[3])
+  local userId = ARGV[4]
+  local token = ARGV[5]
 
   local function seatToIndex(label)
     local rowLetter, col = string.match(label, "([A-Z])%-(%d+)")
@@ -30,13 +32,15 @@ const reserveSeatsScript = `
 
   redis.call("HSET", KEYS[1], "seats", cjson.encode(seats))
 
-  redis.call("SET", KEYS[2], "1", "PX", ARGV[2])
+  redis.call("SET", KEYS[2], "1", "PX", ttl)
+  redis.call("SET", KEYS[3], "1", "PX", notifyTtl)
 
   redis.call("SET", KEYS[2] .. ":data", cjson.encode({
     seats = requestedSeats,
     timeslotKey = KEYS[1],
     userId = userId,
   }))
+  redis.call("SET", KEYS[3] .. ":data", token)
 
   return cjson.encode(seats)
 `;
@@ -140,6 +144,8 @@ const confirmPaymentScript = `
   redis.call("SADD", KEYS[4], ARGV[2])
   redis.call("DEL", KEYS[5])
   redis.call("DEL", KEYS[6])
+  redis.call("DEL", KEYS[7])
+  redis.call("DEL", KEYS[8])
 
   return cjson.encode(seats)
 `;

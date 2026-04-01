@@ -5,6 +5,7 @@ const {
   generateOrdersKey,
   generateOrdersCancelledByUserKey,
 } = require("../utils/keys");
+const sendPushNotification = require("../utils/notifications");
 
 const client = createClient({
   url: process.env.REDIS_URL || "redis://localhost:6379",
@@ -22,28 +23,46 @@ const connectRedis = async () => {
   await subscriber.connect();
 
   await subscriber.subscribe("__keyevent@0__:expired", async (key) => {
-    if (!key.startsWith("reservation:")) return;
+    if (key.startsWith("notify:")) {
+      const dataKey = `${key}:data`;
+      const userDeviceToken = await client.get(dataKey);
 
-    const dataKey = `${key}:data`;
-    const orderId = key.split(":")[1];
+      await sendPushNotification(
+        userDeviceToken,
+        "⏰ Payment Reminder",
+        "You have 5 minutes left to complete your booking",
+        process.env.NODE_ENV === "production"
+          ? `${process.env.FRONTEND_URL}/account/orders/${key.split(":")[1]}`
+          : `http://localhost:5173/account/orders/${key.split(":")[1]}`,
+      );
 
-    const value = await client.get(dataKey);
+      await client.del(dataKey);
 
-    if (!value) return;
+      return;
+    }
 
-    const { seats, timeslotKey, userId } = JSON.parse(value);
+    if (key.startsWith("reservation:")) {
+      const dataKey = `${key}:data`;
+      const orderId = key.split(":")[1];
 
-    await client.eval(releaseSeatsScript, {
-      keys: [
-        timeslotKey,
-        generateOrdersPendingByUserKey(userId),
-        generateOrdersKey(orderId),
-        generateOrdersCancelledByUserKey(userId),
-      ],
-      arguments: [JSON.stringify(seats), orderId, Date.now().toString()],
-    });
+      const value = await client.get(dataKey);
 
-    await client.del(dataKey);
+      if (!value) return;
+
+      const { seats, timeslotKey, userId } = JSON.parse(value);
+
+      await client.eval(releaseSeatsScript, {
+        keys: [
+          timeslotKey,
+          generateOrdersPendingByUserKey(userId),
+          generateOrdersKey(orderId),
+          generateOrdersCancelledByUserKey(userId),
+        ],
+        arguments: [JSON.stringify(seats), orderId, Date.now().toString()],
+      });
+
+      await client.del(dataKey);
+    }
   });
 };
 

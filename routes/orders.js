@@ -11,6 +11,7 @@ const {
   generateOrdersCompleteByUserKey,
   generateExpirationKey,
   generateOrdersCancelledByUserKey,
+  generateNotifyKey,
 } = require("../utils/keys");
 const authMiddleware = require("../middlewares/auth");
 const { DateTime } = require("luxon");
@@ -23,6 +24,7 @@ const {
 const PENDING_PAYMENT = "pending-payment";
 const CONFIRMED_PAYMENT = "confirmed";
 const EXPIRATION_TIME = 15 * 60 * 1000;
+const NOTIFY_TIME = EXPIRATION_TIME - 5 * 60 * 1000;
 
 router.get("/", authMiddleware, async (req, res) => {
   try {
@@ -282,8 +284,16 @@ router.get("/:id", authMiddleware, async (req, res) => {
 router.post("/", authMiddleware, async (req, res) => {
   try {
     const db = getDB();
-    let { idMovie, seats, selectedTime, studio, judul, totalPrice, filePath } =
-      req.body;
+    let {
+      idMovie,
+      seats,
+      selectedTime,
+      studio,
+      judul,
+      totalPrice,
+      filePath,
+      token,
+    } = req.body;
     const { userId, email } = req.user;
     const hasPending = await client.exists(
       generateOrdersPendingByUserKey(userId),
@@ -299,8 +309,15 @@ router.post("/", authMiddleware, async (req, res) => {
       keys: [
         generateTimeslotsKey(selectedTime, idMovie),
         generateExpirationKey(id),
+        generateNotifyKey(id),
       ],
-      arguments: [JSON.stringify(seats), EXPIRATION_TIME.toString(), userId],
+      arguments: [
+        JSON.stringify(seats),
+        EXPIRATION_TIME.toString(),
+        NOTIFY_TIME.toString(),
+        userId,
+        token,
+      ],
     });
     if (!result) {
       return res.status(400).json({ message: "Some seats are already booked" });
@@ -394,6 +411,8 @@ router.post("/confirm-payment/:id", authMiddleware, async (req, res) => {
         generateOrdersCompleteByUserKey(userId),
         generateExpirationKey(id),
         generateExpirationKey(id) + ":data",
+        generateNotifyKey(id),
+        generateNotifyKey(id) + ":data",
       ],
       arguments: [
         JSON.stringify(seats),
@@ -443,6 +462,7 @@ function deserialize(id, order) {
     status: JSON.parse(order.status),
     snacks: JSON.parse(order.snacks),
     paymentDeadline: parseInt(order.paymentDeadline),
+    rating: order.rating ? parseInt(order.rating) : null,
   };
 }
 
