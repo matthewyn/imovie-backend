@@ -15,7 +15,11 @@ const reviewsRouter = require("./routes/reviews");
 const { connectDB } = require("./dbs/mongo");
 const { connectRedis } = require("./dbs/redis");
 
-const serviceAccount = require("./serviceAccountKey.json");
+const serviceAccount = {
+  projectId: process.env.FIREBASE_PROJECT_ID,
+  clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+  privateKey: process.env.FIREBASE_PRIVATE_KEY,
+};
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
