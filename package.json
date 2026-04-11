@@ -12,7 +12,6 @@
     "consumer": "nodemon consumer/profilePhotoConsumer.js"
   },
   "dependencies": {
-    "@confluentinc/kafka-javascript": "^1.9.0",
     "bcrypt": "^6.0.0",
     "cloudinary": "^2.9.0",
     "cookie-parser": "^1.4.7",
@@ -21,6 +20,7 @@
     "express": "^5.2.1",
     "firebase-admin": "^13.7.0",
     "jsonwebtoken": "^9.0.3",
+    "kafkajs": "^2.2.4",
     "luxon": "^3.7.2",
     "mongodb": "^7.1.0",
     "multer": "^2.1.1",

@@ -1,15 +1,15 @@
-const { Kafka } = require("@confluentinc/kafka-javascript").KafkaJS;
+const { Kafka } = require("kafkajs");
 
-const config = {
-  "bootstrap.servers": process.env.KAFKA_BROKER || "localhost:9092",
-  "client.id": "ccloud-nodejs-client-332507ec-da57-4699-a235-71938da0bc49",
-  "security.protocol": "SASL_SSL",
-  "sasl.mechanism": "PLAIN",
-  "sasl.username": process.env.KAFKA_KEY,
-  "sasl.password": process.env.KAFKA_SECRET,
-};
-
-const producer = new Kafka().producer(config);
+const producer = new Kafka({
+  clientId: "ccloud-nodejs-client-332507ec-da57-4699-a235-71938da0bc49",
+  brokers: [process.env.KAFKA_BROKER],
+  ssl: "SASL_SSL",
+  sasl: {
+    mechanism: "plain",
+    username: process.env.KAFKA_KEY,
+    password: process.env.KAFKA_SECRET,
+  },
+}).producer();
 
 const connectProducer = async () => {
   await producer.connect();

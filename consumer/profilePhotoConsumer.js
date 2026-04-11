@@ -2,7 +2,7 @@ require("dotenv").config({
   path: require("path").resolve(__dirname, "../.env"),
 });
 
-const { Kafka } = require("@confluentinc/kafka-javascript").KafkaJS;
+const { Kafka } = require("kafkajs");
 const { connectDB, getDB } = require("../api/dbs/mongo");
 const { connectRedis, client } = require("../api/dbs/redis");
 const { generateUsersKey } = require("../api/utils/keys");
@@ -10,19 +10,19 @@ const { connectProducer, sendMessage } = require("../kafka/producer");
 
 MAX_RETRY = 4;
 
-const config = {
-  "bootstrap.servers": process.env.KAFKA_BROKER || "localhost:9092",
-  "client.id": "ccloud-nodejs-client-332507ec-da57-4699-a235-71938da0bc49",
-  "group.id": "profile-photo-group",
-  "security.protocol": "SASL_SSL",
-  "sasl.mechanism": "PLAIN",
-  "sasl.username": process.env.KAFKA_KEY,
-  "sasl.password": process.env.KAFKA_SECRET,
-  "auto.offset.reset": "earliest",
-  "session.timeout.ms": 45000,
-};
-
-const consumer = new Kafka().consumer(config);
+const consumer = new Kafka({
+  clientId: "ccloud-nodejs-client-332507ec-da57-4699-a235-71938da0bc49",
+  brokers: [process.env.KAFKA_BROKER],
+  ssl: "SASL_SSL",
+  sasl: {
+    mechanism: "plain",
+    username: process.env.KAFKA_KEY,
+    password: process.env.KAFKA_SECRET,
+  },
+}).consumer({
+  groupId: "profile-photo-group",
+  sessionTimeout: 45000,
+});
 
 const run = async () => {
   const disconnect = () => {
