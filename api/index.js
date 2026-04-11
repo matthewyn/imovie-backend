@@ -1,3 +1,5 @@
+require("dotenv").config();
+
 const express = require("express");
 const http = require("http");
 const admin = require("firebase-admin");
@@ -12,8 +14,10 @@ const ordersRouter = require("./routes/orders");
 const wishlistsRouter = require("./routes/wishlists");
 const notificationsRouter = require("./routes/notifications");
 const reviewsRouter = require("./routes/reviews");
+const accountRouter = require("./routes/account");
 const { connectDB } = require("./dbs/mongo");
 const { connectRedis } = require("./dbs/redis");
+const { connectProducer } = require("../kafka/producer");
 
 const serviceAccount = {
   projectId: process.env.FIREBASE_PROJECT_ID,
@@ -51,8 +55,9 @@ app.use("/api/orders", ordersRouter);
 app.use("/api/wishlists", wishlistsRouter);
 app.use("/api/notifications", notificationsRouter);
 app.use("/api/reviews", reviewsRouter);
+app.use("/api/account", upload.single("file"), accountRouter);
 
-Promise.all([connectDB(), connectRedis()]).then(() => {
+Promise.all([connectDB(), connectRedis(), connectProducer()]).then(() => {
   server.listen(3000, () => {
     console.log("Server is running on port 3000");
   });

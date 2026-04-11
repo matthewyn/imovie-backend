@@ -6,7 +6,6 @@ const {
   generateUsersKey,
   generateEmailsKey,
   generateEmailsUniqueKey,
-  generateSessionsKey,
 } = require("../utils/keys");
 const genId = require("../utils/genId");
 const authMiddleware = require("../middlewares/auth");
@@ -21,9 +20,11 @@ const loginSchema = z.object({
 });
 
 const signupSchema = z.object({
-  username: z.string().min(2).max(100),
+  name: z.string().min(2),
   email: z.string().email(),
   password: z.string().min(6),
+  phone: z.string().min(10),
+  country: z.string().min(2),
 });
 
 router.get("/me", authMiddleware, async (req, res) => {
@@ -49,10 +50,16 @@ router.post("/login", async (req, res) => {
     const token = jwt.sign(
       {
         userId: decimalId.toString(16),
-        username: user.username,
         email: user.email,
         role: user.role,
         name: user.name,
+        profileUrl: user.profileUrl,
+        bio: user.bio,
+        phone: user.phone,
+        country: user.country,
+        state: user.state,
+        city: user.city,
+        postalCode: user.postalCode,
       },
       process.env.JWT_SECRET,
       { expiresIn: "24h" },
@@ -65,18 +72,21 @@ router.post("/login", async (req, res) => {
 });
 
 router.post("/signup", async (req, res) => {
-  const { username, email, password } = req.body;
-
-  const { success } = signupSchema.safeParse({ username, email, password });
+  let { name, email, password, phone, country } = req.body;
+  const { success } = signupSchema.safeParse({
+    name,
+    email,
+    password,
+    phone,
+    country,
+  });
   if (!success) {
     return res.status(400).json({ message: "Invalid input data" });
   }
-
-  if (!username || !email || !password) {
-    return res
-      .status(400)
-      .json({ message: "Username, email, and password are required" });
+  if (!name || !email || !password || !phone || !country) {
+    return res.status(400).json({ message: "All fields are required" });
   }
+  phone = phone.replace(/\D/g, "");
   try {
     const emailExists = await client.sIsMember(
       generateEmailsUniqueKey(),
@@ -89,13 +99,28 @@ router.post("/signup", async (req, res) => {
     const db = getDB();
     const hashedPassword = await bcrypt.hash(password, 10);
     await Promise.all([
-      db
-        .collection("users")
-        .insertOne({ username, email, password: hashedPassword, role: "user" }),
-      client.hSet(generateUsersKey(id), {
-        username,
+      db.collection("users").insertOne({
+        name,
         email,
         password: hashedPassword,
+        phone,
+        country,
+        state: "",
+        city: "",
+        postalCode: "",
+        bio: "",
+        role: "user",
+      }),
+      client.hSet(generateUsersKey(id), {
+        name,
+        email,
+        password: hashedPassword,
+        phone,
+        country,
+        state: "",
+        city: "",
+        postalCode: "",
+        bio: "",
         role: "user",
       }),
       client.zAdd(generateEmailsKey(), {
@@ -107,9 +132,15 @@ router.post("/signup", async (req, res) => {
     const token = jwt.sign(
       {
         userId: id,
-        username,
+        name,
         email,
         role: "user",
+        phone,
+        country,
+        state: "",
+        city: "",
+        postalCode: "",
+        bio: "",
       },
       process.env.JWT_SECRET,
       { expiresIn: "24h" },
