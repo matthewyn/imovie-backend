@@ -7,6 +7,17 @@ const { connectDB, getDB } = require("../api/dbs/mongo");
 const { connectRedis, client } = require("../api/dbs/redis");
 const { generateUsersKey } = require("../api/utils/keys");
 const { connectProducer, sendMessage } = require("../kafka/producer");
+const http = require("http");
+
+// Fake HTTP server for Cloud Run
+http
+  .createServer((req, res) => {
+    res.writeHead(200);
+    res.end("OK");
+  })
+  .listen(3000, () => {
+    console.log(`Fake HTTP server running on port 3000`);
+  });
 
 MAX_RETRY = 4;
 
