@@ -12,6 +12,10 @@
     "consumer": "nodemon consumer/profilePhotoConsumer.js"
   },
   "dependencies": {
+    "@langchain/core": "^1.1.40",
+    "@langchain/openai": "^1.4.4",
+    "@langchain/pinecone": "^1.0.1",
+    "@pinecone-database/pinecone": "^7.2.0",
     "bcrypt": "^6.0.0",
     "cloudinary": "^2.9.0",
     "cookie-parser": "^1.4.7",
@@ -25,8 +29,10 @@
     "mongodb": "^7.1.0",
     "multer": "^2.1.1",
     "nodemon": "^3.1.14",
+    "openai": "^6.34.0",
     "redis": "^5.11.0",
     "redlock": "^5.0.0-beta.2",
+    "socket.io": "^4.8.3",
     "zod": "^4.3.6"
   }
 }

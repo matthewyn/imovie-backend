@@ -18,6 +18,16 @@ const accountRouter = require("./routes/account");
 const { connectDB } = require("./dbs/mongo");
 const { connectRedis } = require("./dbs/redis");
 const { connectProducer } = require("../kafka/producer");
+const { Server } = require("socket.io");
+const { initializeAI, getOpenAI } = require("./services/aiService");
+const {
+  initializeVectorStore,
+  getRetriever,
+} = require("./services/vectorStore");
+const {
+  generateSystemMessage,
+  generateRephraseMessage,
+} = require("./utils/ai");
 
 const serviceAccount = {
   projectId: process.env.FIREBASE_PROJECT_ID,
@@ -29,7 +39,7 @@ admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
 });
 
-server = http.createServer(app);
+const server = http.createServer(app);
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -44,6 +54,17 @@ app.use(
     allowedHeaders: ["Content-Type", "Authorization"],
   }),
 );
+
+const io = new Server(server, {
+  cors: {
+    origin:
+      process.env.NODE_ENV === "production"
+        ? process.env.FRONTEND_URL
+        : "http://localhost:5173",
+    methods: ["GET", "POST", "PUT", "DELETE"],
+  },
+});
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -57,10 +78,66 @@ app.use("/api/notifications", notificationsRouter);
 app.use("/api/reviews", reviewsRouter);
 app.use("/api/account", upload.single("file"), accountRouter);
 
-Promise.all([connectDB(), connectRedis(), connectProducer()]).then(() => {
-  server.listen(3000, () => {
-    console.log("Server is running on port 3000");
+async function startServer() {
+  try {
+    // Initialize services
+    const { embeddings } = await initializeAI();
+    await initializeVectorStore(embeddings);
+
+    // Connect to databases
+    await Promise.all([connectDB(), connectRedis(), connectProducer()]);
+
+    // Start server
+    server.listen(3000, () => {
+      console.log("Server is running on port 3000");
+    });
+  } catch (error) {
+    console.error("Failed to start server:", error);
+    process.exit(1);
+  }
+}
+
+io.on("connection", (socket) => {
+  console.log("A user connected: " + socket.id);
+
+  socket.on("disconnect", () => {
+    console.log("User disconnected: " + socket.id);
+  });
+
+  socket.on("client_message", async (data) => {
+    console.log("Received message from client: ", data);
+    let results = "";
+    const openai = getOpenAI();
+    const retriever = getRetriever();
+    const rephraseMessage = generateRephraseMessage(
+      JSON.stringify(data.history),
+      data.text,
+    );
+    const rephraseResponse = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: [{ role: "system", content: rephraseMessage }],
+    });
+    const docs = await retriever.invoke(data.text);
+    const messages = [
+      { role: "system", content: generateSystemMessage(docs) },
+      { role: "user", content: rephraseResponse.choices[0].message.content },
+    ];
+    const stream = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: messages,
+      stream: true,
+    });
+    for await (const part of stream) {
+      const content = part.choices[0].delta.content || "";
+      results += content;
+      if (results.length > 0) {
+        socket.emit("assistant_message_complete", { completed: true });
+      }
+      socket.emit("assistant_message", { text: content });
+    }
   });
 });
+
+startServer();
 
 module.exports = app;
