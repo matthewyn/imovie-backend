@@ -16,7 +16,7 @@ const notificationsRouter = require("./routes/notifications");
 const reviewsRouter = require("./routes/reviews");
 const accountRouter = require("./routes/account");
 const { connectDB } = require("./dbs/mongo");
-const { connectRedis } = require("./dbs/redis");
+const { connectRedis, client } = require("./dbs/redis");
 const { connectProducer } = require("../kafka/producer");
 const { Server } = require("socket.io");
 const { initializeAI, getOpenAI } = require("./services/aiService");
@@ -28,12 +28,17 @@ const {
   generateSystemMessage,
   generateRephraseMessage,
 } = require("./utils/ai");
+const { generateUsersAgentUsageKey } = require("./utils/keys");
+const { checkUsersAgentUsageScript } = require("./utils/scripts");
+const { DateTime } = require("luxon");
+const { default: OpenAI } = require("openai");
 
 const serviceAccount = {
   projectId: process.env.FIREBASE_PROJECT_ID,
   clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
   privateKey: process.env.FIREBASE_PRIVATE_KEY,
 };
+const agentTimeout = 60 * 60 * 24;
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -106,34 +111,57 @@ io.on("connection", (socket) => {
 
   socket.on("client_message", async (data) => {
     console.log("Received message from client: ", data);
-    let results = "";
-    const openai = getOpenAI();
-    const retriever = getRetriever();
-    const rephraseMessage = generateRephraseMessage(
-      JSON.stringify(data.history),
-      data.text,
-    );
-    const rephraseResponse = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: [{ role: "system", content: rephraseMessage }],
+
+    const isAgentUsageAllowed = await client.eval(checkUsersAgentUsageScript, {
+      keys: [generateUsersAgentUsageKey(data.userId)],
+      arguments: [agentTimeout.toString()],
     });
-    const docs = await retriever.invoke(data.text);
-    const messages = [
-      { role: "system", content: generateSystemMessage(docs) },
-      { role: "user", content: rephraseResponse.choices[0].message.content },
-    ];
-    const stream = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: messages,
-      stream: true,
-    });
-    for await (const part of stream) {
-      const content = part.choices[0].delta.content || "";
-      results += content;
-      if (results.length > 0) {
-        socket.emit("assistant_message_complete", { completed: true });
+
+    if (!isAgentUsageAllowed) {
+      socket.emit("agent_usage_limit", {
+        message:
+          "You have reached the daily limit for using the assistant. Please try again tomorrow.",
+      });
+      return;
+    }
+
+    try {
+      const openai = getOpenAI();
+      const retriever = getRetriever();
+      const rephraseMessage = generateRephraseMessage(
+        JSON.stringify(data.history),
+        data.text,
+      );
+      const rephraseResponse = await openai.chat.completions.create({
+        model: "gpt-3.5-turbo",
+        messages: [{ role: "system", content: rephraseMessage }],
+      });
+      const docs = await retriever.invoke(data.text);
+      const messages = [
+        { role: "system", content: generateSystemMessage(docs) },
+        { role: "user", content: rephraseResponse.choices[0].message.content },
+      ];
+      const stream = await openai.chat.completions.create({
+        model: "gpt-3.5-turbo",
+        messages: messages,
+        stream: true,
+      });
+      for await (const part of stream) {
+        const content = part.choices[0].delta.content || "";
+        socket.emit("assistant_message", { text: content });
       }
-      socket.emit("assistant_message", { text: content });
+      socket.emit("assistant_message_complete", { completed: true });
+    } catch (error) {
+      if (error instanceof OpenAI.APIError) {
+        console.error("OpenAI API error:", error);
+        socket.emit("assistant_message_error", {
+          message: "An error occurred while communicating with the assistant.",
+          status: error.status,
+          name: error.name,
+        });
+      } else {
+        throw error;
+      }
     }
   });
 });

@@ -150,8 +150,20 @@ const confirmPaymentScript = `
   return cjson.encode(seats)
 `;
 
+const checkUsersAgentUsageScript = `
+  local usage = redis.call("INCR", KEYS[1])
+  local agentTimeout = tonumber(ARGV[1])
+
+  if usage == 1 then
+    redis.call("EXPIRE", KEYS[1], agentTimeout)
+  end
+
+  return usage >= 4 and 0 or 1
+`;
+
 module.exports = {
   reserveSeatsScript,
   releaseSeatsScript,
   confirmPaymentScript,
+  checkUsersAgentUsageScript,
 };

@@ -4,8 +4,10 @@ const {
   generateOrdersPendingByUserKey,
   generateOrdersKey,
   generateOrdersCancelledByUserKey,
+  generateUsersKey,
 } = require("../utils/keys");
-const sendPushNotification = require("../utils/notifications");
+const { sendPushNotification } = require("../utils/notifications");
+const { sendMessage } = require("../../kafka/producer");
 
 const client = createClient({
   url: process.env.REDIS_URL || "redis://localhost:6379",
@@ -50,6 +52,12 @@ const connectRedis = async () => {
       if (!value) return;
 
       const { seats, timeslotKey, userId } = JSON.parse(value);
+
+      await sendMessage(process.env.KAFKA_TOPIC_RESERVATION, {
+        userId,
+        id: orderId,
+        retryCount: 0,
+      });
 
       await client.eval(releaseSeatsScript, {
         keys: [

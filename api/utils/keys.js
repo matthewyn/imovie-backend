@@ -30,10 +30,6 @@ function generateEmailsUniqueKey() {
   return `emails:unique`;
 }
 
-function generateSessionsKey(sessionId) {
-  return `sessions:${sessionId}`;
-}
-
 function generateUsersOrderKey(id) {
   return `users:${id}:orders`;
 }
@@ -66,6 +62,18 @@ function generateNotifyKey(orderId) {
   return `notify:${orderId}`;
 }
 
+function generateUsersNotificationsKey(userId) {
+  return `users:${userId}:notifications`;
+}
+
+function generateNotificationsKey(notificationId) {
+  return `notifications:${notificationId}`;
+}
+
+function generateUsersAgentUsageKey(userId) {
+  return `users:${userId}:agent_usage`;
+}
+
 module.exports = {
   generateMoviesKey,
   generateMoviesByRatingKey,
@@ -75,7 +83,6 @@ module.exports = {
   generateUsersKey,
   generateEmailsKey,
   generateEmailsUniqueKey,
-  generateSessionsKey,
   generateUsersOrderKey,
   generateOrdersKey,
   generateOrdersPendingByUserKey,
@@ -84,4 +91,7 @@ module.exports = {
   generateExpirationKey,
   generateOrdersCancelledByUserKey,
   generateNotifyKey,
+  generateUsersNotificationsKey,
+  generateNotificationsKey,
+  generateUsersAgentUsageKey,
 };

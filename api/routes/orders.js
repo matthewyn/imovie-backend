@@ -12,6 +12,8 @@ const {
   generateExpirationKey,
   generateOrdersCancelledByUserKey,
   generateNotifyKey,
+  generateUsersNotificationsKey,
+  generateNotificationsKey,
 } = require("../utils/keys");
 const authMiddleware = require("../middlewares/auth");
 const { DateTime } = require("luxon");
@@ -20,11 +22,12 @@ const {
   reserveSeatsScript,
   confirmPaymentScript,
 } = require("../utils/scripts");
+const { generateOrderNotification } = require("../utils/notifications");
 
 const PENDING_PAYMENT = "pending-payment";
 const CONFIRMED_PAYMENT = "confirmed";
-const EXPIRATION_TIME = 15 * 60 * 1000;
-const NOTIFY_TIME = EXPIRATION_TIME - 5 * 60 * 1000;
+const EXPIRATION_TIME = 5 * 60 * 1000;
+const NOTIFY_TIME = EXPIRATION_TIME - 2 * 60 * 1000;
 
 router.get("/", authMiddleware, async (req, res) => {
   try {
@@ -322,6 +325,7 @@ router.post("/", authMiddleware, async (req, res) => {
     if (!result) {
       return res.status(400).json({ message: "Some seats are already booked" });
     }
+    const now = DateTime.now().toMillis();
     await Promise.all([
       db.collection("users").updateOne(
         { email: email },
@@ -347,6 +351,13 @@ router.post("/", authMiddleware, async (req, res) => {
                 Date.now() + EXPIRATION_TIME,
               ).toISOString(),
             },
+            notifications: generateOrderNotification(
+              id,
+              "order-created",
+              `Your order for ${judul} has been created. Please complete the payment before the deadline.`,
+              new Date().toISOString(),
+              "Order Created",
+            ),
           },
         },
       ),
@@ -372,8 +383,22 @@ router.post("/", authMiddleware, async (req, res) => {
             .toMillis(),
         }),
       ),
+      client.hSet(
+        generateNotificationsKey(`${now}:${id}`),
+        generateOrderNotification(
+          id,
+          "order-created",
+          `Your order for ${judul} has been created. Please complete the payment before the deadline.`,
+          now,
+          "Order Created",
+        ),
+      ),
       client.sAdd(generateUsersOrderKey(userId), id),
       client.sAdd(generateOrdersPendingByUserKey(userId), id),
+      client.zAdd(generateUsersNotificationsKey(userId), {
+        score: now,
+        value: `${now}:${id}`,
+      }),
       db.collection("movies").updateOne(
         {
           _id: new ObjectId(idMovie),
@@ -437,6 +462,37 @@ router.post("/confirm-payment/:id", authMiddleware, async (req, res) => {
         },
       },
     );
+    const now = DateTime.now().toMillis();
+    await Promise.all([
+      db.collection("users").updateOne(
+        { email: email },
+        {
+          $push: {
+            notifications: generateOrderNotification(
+              id,
+              "order-confirmed",
+              `Your order for ${judul} has been confirmed.`,
+              new Date().toISOString(),
+              "Order Confirmed",
+            ),
+          },
+        },
+      ),
+      client.zAdd(generateUsersNotificationsKey(userId), {
+        score: now,
+        value: `${now}:${id}`,
+      }),
+      client.hSet(
+        generateNotificationsKey(`${now}:${id}`),
+        generateOrderNotification(
+          id,
+          "order-confirmed",
+          `Your order for ${judul} has been confirmed.`,
+          now,
+          "Order Confirmed",
+        ),
+      ),
+    ]);
     res.status(201).json({ message: "Payment confirmed successfully" });
   } catch (error) {
     console.error("Error confirming payment:", error);

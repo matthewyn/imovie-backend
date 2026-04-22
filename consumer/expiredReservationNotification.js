@@ -5,9 +5,16 @@ require("dotenv").config({
 const { Kafka } = require("kafkajs");
 const { connectDB, getDB } = require("../api/dbs/mongo");
 const { connectRedis, client } = require("../api/dbs/redis");
-const { generateUsersKey } = require("../api/utils/keys");
+const {
+  generateUsersNotificationsKey,
+  generateNotificationsKey,
+  generateUsersKey,
+  generateOrdersKey,
+} = require("../api/utils/keys");
 const { connectProducer, sendMessage } = require("../kafka/producer");
+const { generateOrderNotification } = require("../api/utils/notifications");
 const http = require("http");
+const { DateTime } = require("luxon");
 
 // Fake HTTP server for Cloud Run
 http
@@ -15,7 +22,7 @@ http
     res.writeHead(200);
     res.end("OK");
   })
-  .listen(3000, () => {
+  .listen(3006, () => {
     console.log(`Fake HTTP server running on port 3000`);
   });
 
@@ -31,7 +38,7 @@ const consumer = new Kafka({
     password: process.env.KAFKA_SECRET,
   },
 }).consumer({
-  groupId: "profile-photo-group",
+  groupId: "expired-reservation-group",
   sessionTimeout: 45000,
 });
 
@@ -51,39 +58,57 @@ const run = async () => {
 
   await consumer.connect();
   await consumer.subscribe({
-    topics: [process.env.KAFKA_TOPIC],
+    topics: [process.env.KAFKA_TOPIC_RESERVATION],
   });
 
   await consumer.run({
     eachMessage: async ({ message }) => {
-      console.log("Processing message...");
-      const { email, fileUrl, userId, retryCount } = JSON.parse(
-        message.value.toString(),
-      );
+      console.log("Processing expired reservation...");
+      const { id, userId, retryCount } = JSON.parse(message.value.toString());
       try {
         const db = getDB();
+        const now = DateTime.now().toMillis();
+        const email = await client.hGet(generateUsersKey(userId), "email");
+        const judul = await client.hGet(generateOrdersKey(id), "judul");
         await Promise.all([
           db.collection("users").updateOne(
             { email: email },
             {
-              $set: {
-                profileUrl: fileUrl,
+              $push: {
+                notifications: generateOrderNotification(
+                  id,
+                  "order-cancelled",
+                  `Your order for ${judul} has been cancelled.`,
+                  new Date().toISOString(),
+                  "Order Cancelled",
+                ),
               },
             },
           ),
-          client.hSet(generateUsersKey(userId), {
-            profileUrl: fileUrl,
+          client.zAdd(generateUsersNotificationsKey(userId), {
+            score: now,
+            value: `${now}:${id}`,
           }),
+          client.hSet(
+            generateNotificationsKey(`${now}:${id}`),
+            generateOrderNotification(
+              id,
+              "order-cancelled",
+              `Your order for ${judul} has been cancelled.`,
+              now,
+              "Order Cancelled",
+            ),
+          ),
         ]);
       } catch (error) {
-        console.error("Error processing Kafka message:", error);
+        console.error("Error processing Kafka reservation:", error);
         if (retryCount < MAX_RETRY) {
-          await sendMessage(process.env.KAFKA_TOPIC, {
+          await sendMessage(process.env.KAFKA_RESERVATION, {
             ...JSON.parse(message.value.toString()),
             retryCount: retryCount + 1,
           });
         } else {
-          await sendMessage(process.env.KAFKA_TOPIC_DLQ, {
+          await sendMessage(process.env.KAFKA_RESERVATION_DLQ, {
             ...JSON.parse(message.value.toString()),
             failedAt: new Date(),
             error: error.message,

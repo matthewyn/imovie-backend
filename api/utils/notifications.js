@@ -23,4 +23,22 @@ async function sendPushNotification(userToken, title, body, link) {
   console.log("Successfully sent message:", response);
 }
 
-module.exports = sendPushNotification;
+function generateOrderNotification(
+  orderId,
+  type,
+  description,
+  createdAt,
+  title,
+) {
+  return {
+    orderId: orderId,
+    type: type,
+    description: description,
+    createdAt: createdAt,
+    isRead: 0,
+    title: title,
+    link: `/account/orders/${orderId}`,
+  };
+}
+
+module.exports = { sendPushNotification, generateOrderNotification };
