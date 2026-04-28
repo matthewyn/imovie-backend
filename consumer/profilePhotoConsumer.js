@@ -5,9 +5,9 @@ require("dotenv").config({
 const { Kafka } = require("kafkajs");
 const { connectDB, getDB } = require("../api/dbs/mongo");
 const { connectRedis, client } = require("../api/dbs/redis");
-const { generateUsersKey } = require("../api/utils/keys");
 const { connectProducer, sendMessage } = require("../kafka/producer");
 const http = require("http");
+const { ObjectId } = require("mongodb");
 
 // Fake HTTP server for Cloud Run
 http
@@ -44,7 +44,6 @@ const run = async () => {
   process.on("SIGTERM", disconnect);
   process.on("SIGINT", disconnect);
 
-  // Connect to MongoDB and Redis before starting the consumer
   await connectDB();
   await connectRedis();
   await connectProducer();
@@ -57,24 +56,19 @@ const run = async () => {
   await consumer.run({
     eachMessage: async ({ message }) => {
       console.log("Processing message...");
-      const { email, fileUrl, userId, retryCount } = JSON.parse(
+      const { fileUrl, userId, retryCount } = JSON.parse(
         message.value.toString(),
       );
       try {
         const db = getDB();
-        await Promise.all([
-          db.collection("users").updateOne(
-            { email: email },
-            {
-              $set: {
-                profileUrl: fileUrl,
-              },
+        await db.collection("users").updateOne(
+          { _id: new ObjectId(userId) },
+          {
+            $set: {
+              profileUrl: fileUrl,
             },
-          ),
-          client.hSet(generateUsersKey(userId), {
-            profileUrl: fileUrl,
-          }),
-        ]);
+          },
+        );
       } catch (error) {
         console.error("Error processing Kafka message:", error);
         if (retryCount < MAX_RETRY) {

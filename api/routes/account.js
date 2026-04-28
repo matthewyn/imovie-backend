@@ -2,11 +2,11 @@ const express = require("express");
 const { sendMessage } = require("../../kafka/producer");
 const authMiddleware = require("../middlewares/auth");
 const { uploadToCloudinary } = require("../utils/upload");
-const { generateUsersKey } = require("../utils/keys");
 const z = require("zod");
 const { getDB } = require("../dbs/mongo");
 const { client } = require("../dbs/redis");
 const jwt = require("jsonwebtoken");
+const { ObjectId } = require("mongodb");
 
 const router = express.Router();
 
@@ -29,11 +29,10 @@ router.post("/upload-photo", authMiddleware, async (req, res) => {
   if (!file) {
     return res.status(400).json({ message: "No file uploaded" });
   }
-  const { userId, email } = req.user;
+  const { userId } = req.user;
   try {
     const fileUrl = await uploadToCloudinary(file);
     await sendMessage(process.env.KAFKA_TOPIC, {
-      email,
       fileUrl,
       userId,
       retryCount: 0,
@@ -41,7 +40,7 @@ router.post("/upload-photo", authMiddleware, async (req, res) => {
     const token = jwt.sign(
       {
         userId,
-        email,
+        email: req.user.email,
         role: req.user.role,
         name: req.user.name,
         profileUrl: fileUrl,
@@ -67,7 +66,7 @@ router.post("/upload-photo", authMiddleware, async (req, res) => {
 
 router.put("/update-profile", authMiddleware, async (req, res) => {
   let { name, bio, phone, country } = req.body;
-  const { userId, email } = req.user;
+  const { userId } = req.user;
   const { success } = updateProfileSchema.safeParse({
     name,
     bio,
@@ -84,7 +83,7 @@ router.put("/update-profile", authMiddleware, async (req, res) => {
   try {
     const db = getDB();
     await db.collection("users").updateOne(
-      { email },
+      { _id: new ObjectId(userId) },
       {
         $set: {
           name,
@@ -94,16 +93,10 @@ router.put("/update-profile", authMiddleware, async (req, res) => {
         },
       },
     );
-    await client.hSet(generateUsersKey(userId), {
-      name,
-      bio,
-      phone,
-      country,
-    });
     const token = jwt.sign(
       {
         userId,
-        email,
+        email: req.user.email,
         role: req.user.role,
         name,
         profileUrl: req.user.profileUrl,
@@ -126,7 +119,7 @@ router.put("/update-profile", authMiddleware, async (req, res) => {
 
 router.put("/update-address", authMiddleware, async (req, res) => {
   const { country, state, city, postalCode } = req.body;
-  const { userId, email } = req.user;
+  const { userId } = req.user;
   const { success } = updateAddressSchema.safeParse({
     country,
     state,
@@ -139,7 +132,7 @@ router.put("/update-address", authMiddleware, async (req, res) => {
   try {
     const db = getDB();
     await db.collection("users").updateOne(
-      { email },
+      { _id: new ObjectId(userId) },
       {
         $set: {
           country,
@@ -149,16 +142,10 @@ router.put("/update-address", authMiddleware, async (req, res) => {
         },
       },
     );
-    await client.hSet(generateUsersKey(userId), {
-      country,
-      state,
-      city,
-      postalCode,
-    });
     const token = jwt.sign(
       {
         userId,
-        email,
+        email: req.user.email,
         role: req.user.role,
         name: req.user.name,
         profileUrl: req.user.profileUrl,

@@ -10,6 +10,7 @@ const reserveSeatsScript = `
   local notifyTtl = tonumber(ARGV[3])
   local userId = ARGV[4]
   local token = ARGV[5]
+  local judul = ARGV[6]
 
   local function seatToIndex(label)
     local rowLetter, col = string.match(label, "([A-Z])%-(%d+)")
@@ -39,6 +40,7 @@ const reserveSeatsScript = `
     seats = requestedSeats,
     timeslotKey = KEYS[1],
     userId = userId,
+    judul = judul,
   }))
   redis.call("SET", KEYS[3] .. ":data", token)
 
@@ -71,20 +73,6 @@ const releaseSeatsScript = `
   redis.call("HSET", KEYS[1], "seats", cjson.encode(seats))
 
   redis.call("SREM", KEYS[2], ARGV[2])
-  redis.call("SADD", KEYS[4], ARGV[2])
-
-  local statusJson = redis.call("HGET", KEYS[3], "status")
-
-  if statusJson then
-    local status = cjson.decode(statusJson)
-
-    table.insert(status, {
-      tipe = "cancelled",
-      createdAt = tonumber(ARGV[3])
-    })
-
-    redis.call("HSET", KEYS[3], "status", cjson.encode(status))
-  end
 
   return cjson.encode(seats)
 `;
@@ -114,38 +102,11 @@ const confirmPaymentScript = `
 
   redis.call("HSET", KEYS[1], "seats", cjson.encode(seats))
 
-  local statusJson = redis.call("HGET", KEYS[2], "status")
-
-  if statusJson then
-    local status = cjson.decode(statusJson)
-
-    local alreadyConfirmed = false
-    for i, s in ipairs(status) do
-      if s.tipe == "confirmed" then
-        alreadyConfirmed = true
-        break
-      end
-    end
-
-    if not alreadyConfirmed then
-      table.insert(status, {
-        tipe = "confirmed",
-        createdAt = tonumber(ARGV[3])
-      })
-
-      redis.call("HSET", KEYS[2], "status", cjson.encode(status))
-    end
-  end
-
-  redis.call("HSET", KEYS[2], "snacks", ARGV[4])
-  redis.call("HSET", KEYS[2], "totalPrice", ARGV[5])
-
-  redis.call("SREM", KEYS[3], ARGV[2])
-  redis.call("SADD", KEYS[4], ARGV[2])
+  redis.call("SREM", KEYS[2], ARGV[2])
+  redis.call("DEL", KEYS[3])
+  redis.call("DEL", KEYS[4])
   redis.call("DEL", KEYS[5])
   redis.call("DEL", KEYS[6])
-  redis.call("DEL", KEYS[7])
-  redis.call("DEL", KEYS[8])
 
   return cjson.encode(seats)
 `;

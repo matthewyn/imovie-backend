@@ -1,4 +1,5 @@
 const admin = require("firebase-admin");
+const { ObjectId } = require("mongodb");
 
 async function sendPushNotification(userToken, title, body, link) {
   const response = await admin.messaging().send({
@@ -25,6 +26,7 @@ async function sendPushNotification(userToken, title, body, link) {
 
 function generateOrderNotification(
   orderId,
+  userId,
   type,
   description,
   createdAt,
@@ -32,6 +34,7 @@ function generateOrderNotification(
 ) {
   return {
     orderId: orderId,
+    userId: new ObjectId(userId),
     type: type,
     description: description,
     createdAt: createdAt,

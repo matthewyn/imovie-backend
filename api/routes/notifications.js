@@ -1,49 +1,25 @@
 const express = require("express");
 const authMiddleware = require("../middlewares/auth");
 const router = express.Router();
-const {
-  generateUsersNotificationsKey,
-  generateNotificationsKey,
-} = require("../utils/keys");
+const { generateNotificationsKey } = require("../utils/keys");
 const { client } = require("../dbs/redis");
 const { DateTime } = require("luxon");
+const { getDB } = require("../dbs/mongo");
+const { ObjectId } = require("mongodb");
 
 router.get("/", authMiddleware, async (req, res) => {
   try {
     const { userId } = req.user;
-    const offset = parseInt(req.query.offset) || 0;
+    const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
-    let result = await client.sort(generateUsersNotificationsKey(userId), {
-      BY: "nosort",
-      GET: [
-        "#",
-        `${generateNotificationsKey("*")}->type`,
-        `${generateNotificationsKey("*")}->description`,
-        `${generateNotificationsKey("*")}->isRead`,
-        `${generateNotificationsKey("*")}->createdAt`,
-        `${generateNotificationsKey("*")}->title`,
-        `${generateNotificationsKey("*")}->link`,
-      ],
-      LIMIT: {
-        offset,
-        count: limit,
-      },
-    });
-    const notifications = [];
-    while (result.length) {
-      const [id, type, description, isRead, createdAt, title, link, ...rest] =
-        result;
-      const item = deserialize(id, {
-        type,
-        description,
-        isRead,
-        createdAt,
-        title,
-        link,
-      });
-      notifications.push(item);
-      result = rest;
-    }
+    const db = getDB();
+    const notifications = await db
+      .collection("notifications")
+      .find({ userId: new ObjectId(userId) })
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .toArray();
     res.status(200).json({ notifications });
   } catch (error) {
     console.error("Error fetching notifications:", error);
@@ -72,17 +48,5 @@ router.get("/", authMiddleware, async (req, res) => {
 //     res.status(500).json({ error: "Failed to update notifications" });
 //   }
 // });
-
-function deserialize(id, data) {
-  return {
-    id,
-    createdAt: DateTime.fromMillis(parseInt(data.createdAt)),
-    isRead: data.isRead === "1",
-    type: data.type,
-    description: data.description,
-    title: data.title,
-    link: data.link,
-  };
-}
 
 module.exports = router;

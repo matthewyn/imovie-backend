@@ -4,108 +4,68 @@ const { getDB } = require("../dbs/mongo");
 const { uploadToCloudinary } = require("../utils/upload");
 const { capitalizeFirstLetter } = require("../utils/string");
 const { client } = require("../dbs/redis");
-const {
-  generateMoviesKey,
-  generateMoviesByRatingKey,
-  generateSchedulesKey,
-  generateTimeslotsKey,
-  generateUsersWishlistKey,
-} = require("../utils/keys");
+const { generateMoviesKey, generateTimeslotsKey } = require("../utils/keys");
 const authMiddleware = require("../middlewares/auth");
+const { ObjectId } = require("mongodb");
 
 const NOW_PLAYING = "now-playing";
 const UPCOMING = "upcoming";
+const ALL = "all";
 
 router.get("/", async (req, res) => {
   try {
-    const offset = parseInt(req.query.offset) || 0;
+    const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
-    let nowPlaying = await client.sort(generateMoviesKey(NOW_PLAYING), {
-      BY: "nosort",
-      GET: [
-        "#",
-        `${generateMoviesKey("*")}->judul`,
-        `${generateMoviesKey("*")}->genre`,
-        `${generateMoviesKey("*")}->durasi`,
-        `${generateMoviesKey("*")}->kategoriUmur`,
-        `${generateMoviesKey("*")}->filePath`,
-        `${generateMoviesKey("*")}->videoUrl`,
-        `${generateMoviesKey("*")}->rating`,
-        `${generateMoviesKey("*")}->ratingCount`,
-      ],
-    });
-    let upcoming = await client.sort(generateMoviesKey(UPCOMING), {
-      BY: "nosort",
-      GET: [
-        "#",
-        `${generateMoviesKey("*")}->judul`,
-        `${generateMoviesKey("*")}->genre`,
-        `${generateMoviesKey("*")}->durasi`,
-        `${generateMoviesKey("*")}->kategoriUmur`,
-        `${generateMoviesKey("*")}->filePath`,
-        `${generateMoviesKey("*")}->videoUrl`,
-        `${generateMoviesKey("*")}->rating`,
-        `${generateMoviesKey("*")}->ratingCount`,
-      ],
-      LIMIT: {
-        offset,
-        count: limit,
-      },
-    });
-    const nowPlayingMovies = [];
-    const upcomingMovies = [];
-    while (nowPlaying.length) {
-      const [
-        id,
-        judul,
-        genre,
-        durasi,
-        kategoriUmur,
-        filePath,
-        videoUrl,
-        rating,
-        ratingCount,
-        ...rest
-      ] = nowPlaying;
-      const item = deserialize(id, {
-        judul,
-        genre,
-        durasi,
-        kategoriUmur,
-        filePath,
-        videoUrl,
-        rating,
-        ratingCount,
-      });
-      nowPlayingMovies.push(item);
-      nowPlaying = rest;
+    const db = getDB();
+    const cached = await client.get(generateMoviesKey(ALL));
+    if (cached) {
+      const movies = JSON.parse(cached);
+      return res.status(200).json(movies);
     }
-    while (upcoming.length) {
-      const [
-        id,
-        judul,
-        genre,
-        durasi,
-        kategoriUmur,
-        filePath,
-        videoUrl,
-        rating,
-        ratingCount,
-        ...rest
-      ] = upcoming;
-      const item = deserialize(id, {
-        judul,
-        genre,
-        durasi,
-        kategoriUmur,
-        filePath,
-        videoUrl,
-        rating,
-        ratingCount,
-      });
-      upcomingMovies.push(item);
-      upcoming = rest;
-    }
+    const nowPlayingMovies = await db
+      .collection("movies")
+      .find(
+        { runtime: NOW_PLAYING },
+        {
+          projection: {
+            judul: 1,
+            genre: 1,
+            durasi: 1,
+            kategoriUmur: 1,
+            filePath: 1,
+            videoUrl: 1,
+            runtime: 1,
+          },
+        },
+      )
+      .toArray();
+    const upcomingMovies = await db
+      .collection("movies")
+      .find(
+        { runtime: UPCOMING },
+        {
+          projection: {
+            judul: 1,
+            genre: 1,
+            durasi: 1,
+            kategoriUmur: 1,
+            filePath: 1,
+            videoUrl: 1,
+            runtime: 1,
+          },
+        },
+        {
+          limit,
+        },
+      )
+      .toArray();
+    await client.set(
+      generateMoviesKey(ALL),
+      JSON.stringify({
+        nowPlaying: nowPlayingMovies,
+        upcoming: upcomingMovies,
+      }),
+    );
     res.status(200).json({
       nowPlaying: nowPlayingMovies,
       upcoming: upcomingMovies,
@@ -119,23 +79,33 @@ router.get("/", async (req, res) => {
 router.get("/:id", authMiddleware, async (req, res) => {
   try {
     const id = req.params.id;
-    const movie = await client.hGetAll(generateMoviesKey(id));
     const { userId } = req.user;
-    const schedules = await client.zRangeWithScores(
-      generateSchedulesKey(id),
-      0,
-      -1,
-    );
-    if (Object.keys(movie).length === 0) {
-      return res.status(404).json({ message: "Movie not found" });
+    const db = getDB();
+    const isInWishlist = await db.collection("users").findOne({
+      _id: new ObjectId(userId),
+      wishlists: new ObjectId(id),
+    });
+    const cached = await client.get(generateMoviesKey(id));
+    if (cached) {
+      const { movie, schedules } = JSON.parse(cached);
+      return res
+        .status(200)
+        .json({ movie, schedules, isInWishlist: isInWishlist ? true : false });
     }
-    const isInWishlist = await client.sIsMember(
-      generateUsersWishlistKey(userId),
-      id,
+    const movie = await db
+      .collection("movies")
+      .findOne({ _id: new ObjectId(id) });
+    const schedules = await db
+      .collection("schedules")
+      .find({ movieId: new ObjectId(id) }, { projection: { waktu: 1 } })
+      .toArray();
+    await client.set(
+      generateMoviesKey(id),
+      JSON.stringify({ movie, schedules }),
     );
     res
       .status(200)
-      .json({ movie: deserialize(id, movie), schedules, isInWishlist });
+      .json({ movie, schedules, isInWishlist: isInWishlist ? true : false });
   } catch (error) {
     console.error("Error fetching movie:", error);
     res.status(500).json({ message: "Failed to fetch movie" });
@@ -177,57 +147,16 @@ router.post("/", async (req, res) => {
       filePath,
       originalFileName: file ? file.originalname : null,
       runtime,
-      schedules: [],
       videoUrl: video,
+      rating: 0,
+      ratingCount: 0,
     });
-    const id = result.insertedId.toString();
-
-    await Promise.all([
-      client.hSet(generateMoviesKey(id), {
-        judul,
-        sinopsis,
-        genre: capitalizeFirstLetter(genre),
-        durasi,
-        kategoriUmur,
-        filePath,
-        originalFileName: file ? file.originalname : null,
-        runtime,
-        videoUrl: video,
-      }),
-      client.zAdd(generateMoviesByRatingKey(), {
-        score: 0,
-        value: id,
-      }),
-    ]);
-    if (runtime == NOW_PLAYING) {
-      await client.sAdd(generateMoviesKey(NOW_PLAYING), id);
-    } else {
-      await client.sAdd(generateMoviesKey(UPCOMING), id);
-    }
+    await client.del(generateMoviesKey(ALL));
     res.status(201).json({ message: "Movie added successfully" });
   } catch (error) {
     console.error("Error adding movie:", error);
     res.status(500).json({ message: "Failed to add movie" });
   }
 });
-
-function deserialize(id, movie) {
-  let averageRating = 0;
-  if (parseInt(movie.ratingCount) > 0) {
-    averageRating = parseFloat(movie.rating) / parseInt(movie.ratingCount);
-  }
-  return {
-    id,
-    judul: movie.judul,
-    sinopsis: movie.sinopsis,
-    genre: movie.genre,
-    durasi: parseInt(movie.durasi),
-    averageRating,
-    ratingCount: parseInt(movie.ratingCount) || 0,
-    kategoriUmur: movie.kategoriUmur.toUpperCase(),
-    filePath: movie.filePath,
-    videoUrl: movie.videoUrl,
-  };
-}
 
 module.exports = router;

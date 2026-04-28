@@ -4,17 +4,16 @@ const { getDB } = require("../dbs/mongo");
 const { ObjectId } = require("mongodb");
 const authMiddleware = require("../middlewares/auth");
 const { client } = require("../dbs/redis");
-const { generateMoviesKey, generateOrdersKey } = require("../utils/keys");
 
 router.post("/:id", authMiddleware, async (req, res) => {
   try {
     const db = getDB();
-    const { idMovie, rating, review } = req.body;
+    const { movieId, rating, review } = req.body;
     const { id } = req.params;
-    const { email } = req.user;
+    const { userId } = req.user;
     await Promise.all([
       db.collection("movies").updateOne(
-        { _id: new ObjectId(idMovie) },
+        { _id: new ObjectId(movieId) },
         {
           $inc: {
             rating: rating,
@@ -22,21 +21,15 @@ router.post("/:id", authMiddleware, async (req, res) => {
           },
         },
       ),
-      client.hIncrBy(generateMoviesKey(idMovie), "rating", rating),
-      client.hIncrBy(generateMoviesKey(idMovie), "ratingCount", 1),
-      db.collection("users").updateOne(
-        { email: email, "orders.id": id },
+      db.collection("orders").updateOne(
+        { _id: id },
         {
           $set: {
-            "orders.$.review": review,
-            "orders.$.rating": rating,
+            review: review,
+            rating: rating,
           },
         },
       ),
-      client.hSet(generateOrdersKey(id), {
-        review: review,
-        rating: rating,
-      }),
     ]);
     res.status(201).json({ message: "Review submitted successfully" });
   } catch (error) {

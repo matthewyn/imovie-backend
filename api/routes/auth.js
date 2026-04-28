@@ -2,12 +2,7 @@ const express = require("express");
 const bcrypt = require("bcrypt");
 const { getDB } = require("../dbs/mongo");
 const { client } = require("../dbs/redis");
-const {
-  generateUsersKey,
-  generateEmailsKey,
-  generateEmailsUniqueKey,
-} = require("../utils/keys");
-const genId = require("../utils/genId");
+const { generateEmailsUniqueKey } = require("../utils/keys");
 const authMiddleware = require("../middlewares/auth");
 const z = require("zod");
 const jwt = require("jsonwebtoken");
@@ -38,18 +33,18 @@ router.post("/login", async (req, res) => {
     if (!success) {
       return res.status(400).json({ message: "Invalid input data" });
     }
-    const decimalId = await client.zScore(generateEmailsKey(), email);
-    if (!decimalId) {
+    const db = getDB();
+    const user = await db.collection("users").findOne({ email });
+    if (!user) {
       return res.status(400).json({ message: "Invalid email or password" });
     }
-    const user = await client.hGetAll(generateUsersKey(decimalId.toString(16)));
     const passwordMatch = await bcrypt.compare(password, user.password);
     if (!passwordMatch) {
       return res.status(400).json({ message: "Invalid email or password" });
     }
     const token = jwt.sign(
       {
-        userId: decimalId.toString(16),
+        userId: user._id.toString(),
         email: user.email,
         role: user.role,
         name: user.name,
@@ -95,43 +90,24 @@ router.post("/signup", async (req, res) => {
     if (emailExists) {
       return res.status(400).json({ message: "Email already exists" });
     }
-    const id = genId();
     const db = getDB();
     const hashedPassword = await bcrypt.hash(password, 10);
-    await Promise.all([
-      db.collection("users").insertOne({
-        name,
-        email,
-        password: hashedPassword,
-        phone,
-        country,
-        state: "",
-        city: "",
-        postalCode: "",
-        bio: "",
-        role: "user",
-      }),
-      client.hSet(generateUsersKey(id), {
-        name,
-        email,
-        password: hashedPassword,
-        phone,
-        country,
-        state: "",
-        city: "",
-        postalCode: "",
-        bio: "",
-        role: "user",
-      }),
-      client.zAdd(generateEmailsKey(), {
-        score: parseInt(id, 16),
-        value: email,
-      }),
-      client.sAdd(generateEmailsUniqueKey(), email),
-    ]);
+    const user = await db.collection("users").insertOne({
+      name,
+      email,
+      password: hashedPassword,
+      phone,
+      country,
+      state: "",
+      city: "",
+      postalCode: "",
+      bio: "",
+      role: "user",
+    });
+    await client.sAdd(generateEmailsUniqueKey(), email);
     const token = jwt.sign(
       {
-        userId: id,
+        userId: user.insertedId.toString(),
         name,
         email,
         role: "user",

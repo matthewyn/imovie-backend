@@ -42,16 +42,8 @@ function generateOrdersPendingByUserKey(userId) {
   return `users:${userId}:orders:pending`;
 }
 
-function generateOrdersCompleteByUserKey(userId) {
-  return `users:${userId}:orders:complete`;
-}
-
-function generateOrdersCancelledByUserKey(userId) {
-  return `users:${userId}:orders:cancelled`;
-}
-
-function generateUsersWishlistKey(userId) {
-  return `users:${userId}:wishlist`;
+function generateUsersWishlistKey(userId, page) {
+  return `users:${userId}:wishlist:${page}`;
 }
 
 function generateExpirationKey(orderId) {
@@ -86,10 +78,8 @@ module.exports = {
   generateUsersOrderKey,
   generateOrdersKey,
   generateOrdersPendingByUserKey,
-  generateOrdersCompleteByUserKey,
   generateUsersWishlistKey,
   generateExpirationKey,
-  generateOrdersCancelledByUserKey,
   generateNotifyKey,
   generateUsersNotificationsKey,
   generateNotificationsKey,

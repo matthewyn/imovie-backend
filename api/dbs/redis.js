@@ -1,13 +1,14 @@
 const { createClient } = require("redis");
 const { releaseSeatsScript } = require("../utils/scripts");
-const {
-  generateOrdersPendingByUserKey,
-  generateOrdersKey,
-  generateOrdersCancelledByUserKey,
-  generateUsersKey,
-} = require("../utils/keys");
+const { generateOrdersPendingByUserKey } = require("../utils/keys");
 const { sendPushNotification } = require("../utils/notifications");
 const { sendMessage } = require("../../kafka/producer");
+const { getDB } = require("../dbs/mongo");
+const CANCELLED_PAYMENT = "cancelled";
+const { DateTime } = require("luxon");
+const { ObjectId } = require("mongodb");
+const { seatToIndex } = require("../utils/string");
+const { getIO } = require("../services/socket");
 
 const client = createClient({
   url: process.env.REDIS_URL || "redis://localhost:6379",
@@ -25,6 +26,8 @@ const connectRedis = async () => {
   await subscriber.connect();
 
   await subscriber.subscribe("__keyevent@0__:expired", async (key) => {
+    const db = getDB();
+
     if (key.startsWith("notify:")) {
       const dataKey = `${key}:data`;
       const userDeviceToken = await client.get(dataKey);
@@ -51,25 +54,52 @@ const connectRedis = async () => {
 
       if (!value) return;
 
-      const { seats, timeslotKey, userId } = JSON.parse(value);
+      const { seats, timeslotKey, userId, judul } = JSON.parse(value);
+      const millis = parseInt(timeslotKey.split(":")[0]);
+      const movieId = timeslotKey.split(":")[1];
+      const timeslotDateTime = DateTime.fromMillis(millis).toUTC().toISO();
 
-      await sendMessage(process.env.KAFKA_TOPIC_RESERVATION, {
-        userId,
-        id: orderId,
-        retryCount: 0,
-      });
+      for (const seat of seats) {
+        const [rowIndex, colIndex] = seatToIndex(seat);
+        await db.collection("schedules").updateOne(
+          { movieId: new ObjectId(movieId), waktu: timeslotDateTime },
+          {
+            $inc: { [`studio.seats.${rowIndex}.${colIndex}`]: -1 },
+          },
+        );
+      }
+
+      await Promise.all([
+        sendMessage(process.env.KAFKA_TOPIC_RESERVATION, {
+          userId,
+          id: orderId,
+          retryCount: 0,
+          judul,
+        }),
+        db.collection("orders").updateOne(
+          { _id: orderId },
+          {
+            $push: {
+              status: {
+                tipe: CANCELLED_PAYMENT,
+                createdAt: new Date().toISOString(),
+              },
+            },
+          },
+        ),
+      ]);
 
       await client.eval(releaseSeatsScript, {
-        keys: [
-          timeslotKey,
-          generateOrdersPendingByUserKey(userId),
-          generateOrdersKey(orderId),
-          generateOrdersCancelledByUserKey(userId),
-        ],
-        arguments: [JSON.stringify(seats), orderId, Date.now().toString()],
+        keys: [timeslotKey, generateOrdersPendingByUserKey(userId)],
+        arguments: [JSON.stringify(seats), orderId],
       });
 
       await client.del(dataKey);
+
+      const io = getIO();
+      io.to(userId).emit("reservation_expired", {
+        message: "Your reservation has expired. Please try booking again.",
+      });
     }
   });
 };

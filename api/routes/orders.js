@@ -4,16 +4,10 @@ const { getDB } = require("../dbs/mongo");
 const { ObjectId } = require("mongodb");
 const { client } = require("../dbs/redis");
 const {
-  generateUsersOrderKey,
-  generateOrdersKey,
   generateTimeslotsKey,
   generateOrdersPendingByUserKey,
-  generateOrdersCompleteByUserKey,
   generateExpirationKey,
-  generateOrdersCancelledByUserKey,
   generateNotifyKey,
-  generateUsersNotificationsKey,
-  generateNotificationsKey,
 } = require("../utils/keys");
 const authMiddleware = require("../middlewares/auth");
 const { DateTime } = require("luxon");
@@ -26,62 +20,28 @@ const { generateOrderNotification } = require("../utils/notifications");
 
 const PENDING_PAYMENT = "pending-payment";
 const CONFIRMED_PAYMENT = "confirmed";
-const EXPIRATION_TIME = 5 * 60 * 1000;
-const NOTIFY_TIME = EXPIRATION_TIME - 2 * 60 * 1000;
+const CANCELLED_PAYMENT = "cancelled";
+const EXPIRATION_TIME = 15 * 60 * 1000;
+const NOTIFY_TIME = EXPIRATION_TIME - 5 * 60 * 1000;
 
 router.get("/", authMiddleware, async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 0;
+    const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
+    const db = getDB();
     const id = req.user.userId;
-    const orderCount = await client.sCard(generateUsersOrderKey(id));
+    const orderCount = await db
+      .collection("orders")
+      .countDocuments({ userId: new ObjectId(id) });
     const totalPages = Math.ceil(orderCount / limit);
-    let result = await client.sort(generateUsersOrderKey(id), {
-      BY: "nosort",
-      GET: [
-        "#",
-        `${generateOrdersKey("*")}->seats`,
-        `${generateOrdersKey("*")}->jam`,
-        `${generateOrdersKey("*")}->studio`,
-        `${generateOrdersKey("*")}->judul`,
-        `${generateOrdersKey("*")}->status`,
-        `${generateOrdersKey("*")}->totalPrice`,
-        `${generateOrdersKey("*")}->filePath`,
-        `${generateOrdersKey("*")}->snacks`,
-      ],
-      LIMIT: {
-        offset: (page - 1) * limit,
-        count: limit,
-      },
-      DIRECTION: "DESC",
-    });
-    const orders = [];
-    while (result.length) {
-      const [
-        id,
-        seats,
-        jam,
-        studio,
-        judul,
-        status,
-        totalPrice,
-        filePath,
-        snacks,
-        ...rest
-      ] = result;
-      const item = deserialize(id, {
-        seats,
-        jam,
-        studio,
-        judul,
-        status,
-        totalPrice,
-        filePath,
-        snacks,
-      });
-      orders.push(item);
-      result = rest;
-    }
+    const orders = await db
+      .collection("orders")
+      .find({ userId: new ObjectId(id) })
+      .project({ userId: 0, movieId: 0 })
+      .sort({ paymentDeadline: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .toArray();
     res.status(200).json({ orders, totalPages });
   } catch (error) {
     console.error("Error fetching orders:", error);
@@ -91,58 +51,20 @@ router.get("/", authMiddleware, async (req, res) => {
 
 router.get("/pending-payment", authMiddleware, async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 0;
-    const limit = parseInt(req.query.limit) || 10;
+    const db = getDB();
     const id = req.user.userId;
-    const orderCount = await client.sCard(generateOrdersPendingByUserKey(id));
-    const totalPages = Math.ceil(orderCount / limit);
-    let result = await client.sort(generateOrdersPendingByUserKey(id), {
-      BY: "nosort",
-      GET: [
-        "#",
-        `${generateOrdersKey("*")}->seats`,
-        `${generateOrdersKey("*")}->jam`,
-        `${generateOrdersKey("*")}->studio`,
-        `${generateOrdersKey("*")}->judul`,
-        `${generateOrdersKey("*")}->status`,
-        `${generateOrdersKey("*")}->totalPrice`,
-        `${generateOrdersKey("*")}->filePath`,
-        `${generateOrdersKey("*")}->snacks`,
-      ],
-      LIMIT: {
-        offset: (page - 1) * limit,
-        count: limit,
-      },
-      DIRECTION: "DESC",
-    });
-    const orders = [];
-    while (result.length) {
-      const [
-        id,
-        seats,
-        jam,
-        studio,
-        judul,
-        status,
-        totalPrice,
-        filePath,
-        snacks,
-        ...rest
-      ] = result;
-      const item = deserialize(id, {
-        seats,
-        jam,
-        studio,
-        judul,
-        status,
-        totalPrice,
-        filePath,
-        snacks,
-      });
-      orders.push(item);
-      result = rest;
-    }
-    res.status(200).json({ orders, totalPages });
+    const orders = await db
+      .collection("orders")
+      .find({
+        userId: new ObjectId(id),
+        status: {
+          $size: 1,
+        },
+      })
+      .project({ userId: 0, movieId: 0 })
+      .sort({ paymentDeadline: -1 })
+      .toArray();
+    res.status(200).json({ orders, totalPages: 1 });
   } catch (error) {
     console.error("Error fetching pending payment orders:", error);
     res.status(500).json({ message: "Internal server error" });
@@ -151,120 +73,66 @@ router.get("/pending-payment", authMiddleware, async (req, res) => {
 
 router.get("/confirmed", authMiddleware, async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 0;
+    const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const id = req.user.userId;
-    const orderCount = await client.sCard(generateOrdersCompleteByUserKey(id));
-    const totalPages = Math.ceil(orderCount / limit);
-    let result = await client.sort(generateOrdersCompleteByUserKey(id), {
-      BY: "nosort",
-      GET: [
-        "#",
-        `${generateOrdersKey("*")}->seats`,
-        `${generateOrdersKey("*")}->jam`,
-        `${generateOrdersKey("*")}->studio`,
-        `${generateOrdersKey("*")}->judul`,
-        `${generateOrdersKey("*")}->status`,
-        `${generateOrdersKey("*")}->totalPrice`,
-        `${generateOrdersKey("*")}->filePath`,
-        `${generateOrdersKey("*")}->snacks`,
-      ],
-      LIMIT: {
-        offset: (page - 1) * limit,
-        count: limit,
+    const db = getDB();
+    const orderCount = await db.collection("orders").countDocuments({
+      userId: new ObjectId(id),
+      $expr: {
+        $eq: [{ $arrayElemAt: ["$status.tipe", -1] }, CONFIRMED_PAYMENT],
       },
-      DIRECTION: "DESC",
     });
-    const orders = [];
-    while (result.length) {
-      const [
-        id,
-        seats,
-        jam,
-        studio,
-        judul,
-        status,
-        totalPrice,
-        filePath,
-        snacks,
-        ...rest
-      ] = result;
-      const item = deserialize(id, {
-        seats,
-        jam,
-        studio,
-        judul,
-        status,
-        totalPrice,
-        filePath,
-        snacks,
-      });
-      orders.push(item);
-      result = rest;
-    }
+    const totalPages = Math.ceil(orderCount / limit);
+    const orders = await db
+      .collection("orders")
+      .find({
+        userId: new ObjectId(id),
+        $expr: {
+          $eq: [{ $arrayElemAt: ["$status.tipe", -1] }, CONFIRMED_PAYMENT],
+        },
+      })
+      .project({ userId: 0, movieId: 0 })
+      .sort({ paymentDeadline: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .toArray();
     res.status(200).json({ orders, totalPages });
   } catch (error) {
-    console.error("Error fetching pending payment orders:", error);
+    console.error("Error fetching confirmed orders:", error);
     res.status(500).json({ message: "Internal server error" });
   }
 });
 
 router.get("/cancelled", authMiddleware, async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 0;
+    const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const id = req.user.userId;
-    const orderCount = await client.sCard(generateOrdersCancelledByUserKey(id));
-    const totalPages = Math.ceil(orderCount / limit);
-    let result = await client.sort(generateOrdersCancelledByUserKey(id), {
-      BY: "nosort",
-      GET: [
-        "#",
-        `${generateOrdersKey("*")}->seats`,
-        `${generateOrdersKey("*")}->jam`,
-        `${generateOrdersKey("*")}->studio`,
-        `${generateOrdersKey("*")}->judul`,
-        `${generateOrdersKey("*")}->status`,
-        `${generateOrdersKey("*")}->totalPrice`,
-        `${generateOrdersKey("*")}->filePath`,
-        `${generateOrdersKey("*")}->snacks`,
-      ],
-      LIMIT: {
-        offset: (page - 1) * limit,
-        count: limit,
+    const db = getDB();
+    const orderCount = await db.collection("orders").countDocuments({
+      userId: new ObjectId(id),
+      $expr: {
+        $eq: [{ $arrayElemAt: ["$status.tipe", -1] }, CANCELLED_PAYMENT],
       },
-      DIRECTION: "DESC",
     });
-    const orders = [];
-    while (result.length) {
-      const [
-        id,
-        seats,
-        jam,
-        studio,
-        judul,
-        status,
-        totalPrice,
-        filePath,
-        snacks,
-        ...rest
-      ] = result;
-      const item = deserialize(id, {
-        seats,
-        jam,
-        studio,
-        judul,
-        status,
-        totalPrice,
-        filePath,
-        snacks,
-      });
-      orders.push(item);
-      result = rest;
-    }
+    const totalPages = Math.ceil(orderCount / limit);
+    const orders = await db
+      .collection("orders")
+      .find({
+        userId: new ObjectId(id),
+        $expr: {
+          $eq: [{ $arrayElemAt: ["$status.tipe", -1] }, CANCELLED_PAYMENT],
+        },
+      })
+      .project({ userId: 0, movieId: 0 })
+      .sort({ paymentDeadline: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .toArray();
     res.status(200).json({ orders, totalPages });
   } catch (error) {
-    console.error("Error fetching pending payment orders:", error);
+    console.error("Error fetching cancelled orders:", error);
     res.status(500).json({ message: "Internal server error" });
   }
 });
@@ -272,11 +140,13 @@ router.get("/cancelled", authMiddleware, async (req, res) => {
 router.get("/:id", authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
-    const orderData = await client.hGetAll(generateOrdersKey(id));
-    if (Object.keys(orderData).length === 0) {
+    const db = getDB();
+    const order = await db
+      .collection("orders")
+      .findOne({ _id: id }, { projection: { userId: 0 } });
+    if (!order) {
       return res.status(404).json({ message: "Order not found" });
     }
-    const order = deserialize(id, orderData);
     res.status(200).json(order);
   } catch (error) {
     console.error("Error fetching order:", error);
@@ -288,7 +158,7 @@ router.post("/", authMiddleware, async (req, res) => {
   try {
     const db = getDB();
     let {
-      idMovie,
+      movieId,
       seats,
       selectedTime,
       studio,
@@ -297,7 +167,7 @@ router.post("/", authMiddleware, async (req, res) => {
       filePath,
       token,
     } = req.body;
-    const { userId, email } = req.user;
+    const { userId } = req.user;
     const hasPending = await client.exists(
       generateOrdersPendingByUserKey(userId),
     );
@@ -310,7 +180,7 @@ router.post("/", authMiddleware, async (req, res) => {
     const ISOTime = DateTime.fromMillis(selectedTime).toUTC().toISO();
     const result = await client.eval(reserveSeatsScript, {
       keys: [
-        generateTimeslotsKey(selectedTime, idMovie),
+        generateTimeslotsKey(selectedTime, movieId),
         generateExpirationKey(id),
         generateNotifyKey(id),
       ],
@@ -320,100 +190,56 @@ router.post("/", authMiddleware, async (req, res) => {
         NOTIFY_TIME.toString(),
         userId,
         token,
+        judul,
       ],
     });
     if (!result) {
       return res.status(400).json({ message: "Some seats are already booked" });
     }
-    const now = DateTime.now().toMillis();
     await Promise.all([
-      db.collection("users").updateOne(
-        { email: email },
-        {
-          $push: {
-            orders: {
-              id,
-              seats,
-              jam: ISOTime,
-              studio,
-              judul,
-              status: [
-                {
-                  tipe: PENDING_PAYMENT,
-                  createdAt: new Date().toISOString(),
-                },
-              ],
-              totalPrice,
-              filePath,
-              idMovie,
-              snacks: [],
-              paymentDeadline: new Date(
-                Date.now() + EXPIRATION_TIME,
-              ).toISOString(),
-            },
-            notifications: generateOrderNotification(
-              id,
-              "order-created",
-              `Your order for ${judul} has been created. Please complete the payment before the deadline.`,
-              new Date().toISOString(),
-              "Order Created",
-            ),
+      db.collection("orders").insertOne({
+        _id: id,
+        userId: new ObjectId(userId),
+        movieId: new ObjectId(movieId),
+        seats,
+        jam: ISOTime,
+        studio,
+        judul,
+        status: [
+          {
+            tipe: PENDING_PAYMENT,
+            createdAt: new Date().toISOString(),
           },
-        },
-      ),
-      client.hSet(
-        generateOrdersKey(id),
-        serialize({
-          seats,
-          jam: selectedTime,
-          studio,
-          judul,
-          status: JSON.stringify([
-            {
-              tipe: PENDING_PAYMENT,
-              createdAt: DateTime.now().toMillis(),
-            },
-          ]),
-          totalPrice,
-          filePath,
-          idMovie,
-          snacks: [],
-          paymentDeadline: DateTime.now()
-            .plus({ milliseconds: EXPIRATION_TIME })
-            .toMillis(),
-        }),
-      ),
-      client.hSet(
-        generateNotificationsKey(`${now}:${id}`),
-        generateOrderNotification(
-          id,
-          "order-created",
-          `Your order for ${judul} has been created. Please complete the payment before the deadline.`,
-          now,
-          "Order Created",
-        ),
-      ),
-      client.sAdd(generateUsersOrderKey(userId), id),
-      client.sAdd(generateOrdersPendingByUserKey(userId), id),
-      client.zAdd(generateUsersNotificationsKey(userId), {
-        score: now,
-        value: `${now}:${id}`,
+        ],
+        totalPrice,
+        filePath,
+        snacks: [],
+        paymentDeadline: new Date(Date.now() + EXPIRATION_TIME).toISOString(),
       }),
-      db.collection("movies").updateOne(
+      db
+        .collection("notifications")
+        .insertOne(
+          generateOrderNotification(
+            id,
+            userId,
+            "order-created",
+            `Your order for ${judul} has been created. Please complete the payment before the deadline.`,
+            new Date().toISOString(),
+            "Order Created",
+          ),
+        ),
+      db.collection("schedules").updateOne(
         {
-          _id: new ObjectId(idMovie),
-          schedules: {
-            $elemMatch: {
-              waktu: ISOTime,
-            },
-          },
+          movieId: new ObjectId(movieId),
+          waktu: ISOTime,
         },
         {
           $set: {
-            "schedules.$.studio.seats": JSON.parse(result),
+            "studio.seats": JSON.parse(result),
           },
         },
       ),
+      client.sAdd(generateOrdersPendingByUserKey(userId), id),
     ]);
     res.status(201).json({ message: "Order created successfully", id });
   } catch (error) {
@@ -425,73 +251,50 @@ router.post("/", authMiddleware, async (req, res) => {
 router.post("/confirm-payment/:id", authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
-    const { idMovie, selectedTime, seats, snacks, totalPrice } = req.body;
-    const { userId, email } = req.user;
+    const { movieId, selectedTime, seats, snacks, totalPrice, judul } =
+      req.body;
+    const { userId } = req.user;
     const db = getDB();
+    const millis = DateTime.fromISO(selectedTime).toMillis();
     await client.eval(confirmPaymentScript, {
       keys: [
-        generateTimeslotsKey(selectedTime, idMovie),
-        generateOrdersKey(id),
+        generateTimeslotsKey(millis, movieId),
         generateOrdersPendingByUserKey(userId),
-        generateOrdersCompleteByUserKey(userId),
         generateExpirationKey(id),
         generateExpirationKey(id) + ":data",
         generateNotifyKey(id),
         generateNotifyKey(id) + ":data",
       ],
-      arguments: [
-        JSON.stringify(seats),
-        id,
-        Date.now().toString(),
-        JSON.stringify(snacks),
-        totalPrice.toString(),
-      ],
+      arguments: [JSON.stringify(seats), id],
     });
-    await db.collection("users").updateOne(
-      { email: email, "orders.id": id },
-      {
-        $push: {
-          "orders.$.status": {
-            tipe: CONFIRMED_PAYMENT,
-            createdAt: new Date().toISOString(),
-          },
-        },
-        $set: {
-          "orders.$.snacks": snacks,
-          "orders.$.totalPrice": totalPrice,
-        },
-      },
-    );
-    const now = DateTime.now().toMillis();
     await Promise.all([
-      db.collection("users").updateOne(
-        { email: email },
+      db.collection("orders").updateOne(
+        { _id: id },
         {
           $push: {
-            notifications: generateOrderNotification(
-              id,
-              "order-confirmed",
-              `Your order for ${judul} has been confirmed.`,
-              new Date().toISOString(),
-              "Order Confirmed",
-            ),
+            status: {
+              tipe: CONFIRMED_PAYMENT,
+              createdAt: new Date().toISOString(),
+            },
+          },
+          $set: {
+            snacks: snacks,
+            totalPrice: totalPrice,
           },
         },
       ),
-      client.zAdd(generateUsersNotificationsKey(userId), {
-        score: now,
-        value: `${now}:${id}`,
-      }),
-      client.hSet(
-        generateNotificationsKey(`${now}:${id}`),
-        generateOrderNotification(
-          id,
-          "order-confirmed",
-          `Your order for ${judul} has been confirmed.`,
-          now,
-          "Order Confirmed",
+      db
+        .collection("notifications")
+        .insertOne(
+          generateOrderNotification(
+            id,
+            userId,
+            "order-confirmed",
+            `Your order for ${judul} has been confirmed.`,
+            new Date().toISOString(),
+            "Order Confirmed",
+          ),
         ),
-      ),
     ]);
     res.status(201).json({ message: "Payment confirmed successfully" });
   } catch (error) {

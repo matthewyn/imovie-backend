@@ -2,18 +2,9 @@ const express = require("express");
 const router = express.Router();
 const { getDB } = require("../dbs/mongo");
 const { client } = require("../dbs/redis");
-const {
-  generateTimeslotsKey,
-  generateStudiosKey,
-  generateSchedulesKey,
-} = require("../utils/keys");
-const genId = require("../utils/genId");
+const { generateTimeslotsKey, generateMoviesKey } = require("../utils/keys");
 const { DateTime } = require("luxon");
 const { ObjectId } = require("mongodb");
-
-router.get("/", async (req, res) => {
-  res.status(200).json({ message: "Schedules endpoint is working" });
-});
 
 router.post("/", async (req, res) => {
   try {
@@ -21,33 +12,25 @@ router.post("/", async (req, res) => {
     const { kategoriStudio, kategoriMovie, tanggal, waktu } = req.body;
     const dateTimeString = `${tanggal}T${waktu}`;
     const timeslotMillis = DateTime.fromISO(dateTimeString).toMillis();
-    const studio = await client.hGetAll(generateStudiosKey(kategoriStudio));
-    const id = genId();
+    const studio = await db
+      .collection("studios")
+      .findOne({ _id: new ObjectId(kategoriStudio) });
     await Promise.all([
-      db.collection("movies").updateOne(
-        { _id: new ObjectId(kategoriMovie) },
-        {
-          $push: {
-            schedules: {
-              waktu: new Date(dateTimeString).toISOString(),
-              studio: {
-                _id: kategoriStudio,
-                nama: studio.nama,
-                seats: JSON.parse(studio.seats),
-              },
-            },
-          },
+      db.collection("schedules").insertOne({
+        movieId: new ObjectId(kategoriMovie),
+        waktu: new Date(dateTimeString).toISOString(),
+        studio: {
+          _id: new ObjectId(kategoriStudio),
+          nama: studio.nama,
+          seats: studio.seats,
         },
-      ),
+      }),
       client.hSet(generateTimeslotsKey(timeslotMillis, kategoriMovie), {
         id: kategoriStudio,
         nama: studio.nama,
-        seats: studio.seats,
-      }),
-      client.zAdd(generateSchedulesKey(kategoriMovie), {
-        score: timeslotMillis,
-        value: id,
-      }),
+        seats: JSON.stringify(studio.seats),
+      }), // Core operation to add timeslot to Redis
+      client.del(generateMoviesKey(kategoriMovie)),
     ]);
     res.status(201).json({ message: "Schedule created successfully" });
   } catch (error) {

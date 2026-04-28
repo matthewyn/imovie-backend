@@ -18,12 +18,12 @@ const accountRouter = require("./routes/account");
 const { connectDB } = require("./dbs/mongo");
 const { connectRedis, client } = require("./dbs/redis");
 const { connectProducer } = require("../kafka/producer");
-const { Server } = require("socket.io");
 const { initializeAI, getOpenAI } = require("./services/aiService");
 const {
   initializeVectorStore,
   getRetriever,
 } = require("./services/vectorStore");
+const { initSocket, getIO } = require("./services/socket");
 const {
   generateSystemMessage,
   generateRephraseMessage,
@@ -60,15 +60,7 @@ app.use(
   }),
 );
 
-const io = new Server(server, {
-  cors: {
-    origin:
-      process.env.NODE_ENV === "production"
-        ? process.env.FRONTEND_URL
-        : "http://localhost:5173",
-    methods: ["GET", "POST", "PUT", "DELETE"],
-  },
-});
+const io = initSocket(server);
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -103,7 +95,10 @@ async function startServer() {
 }
 
 io.on("connection", (socket) => {
-  console.log("A user connected: " + socket.id);
+  socket.on("join", (userId) => {
+    console.log(`User ${userId} joined room: ${socket.id}`);
+    socket.join(userId);
+  });
 
   socket.on("disconnect", () => {
     console.log("User disconnected: " + socket.id);
@@ -112,8 +107,15 @@ io.on("connection", (socket) => {
   socket.on("client_message", async (data) => {
     console.log("Received message from client: ", data);
 
+    if (!data.user) {
+      socket.emit("user_not_allowed", {
+        message: "You must be logged in to use the assistant.",
+      });
+      return;
+    }
+
     const isAgentUsageAllowed = await client.eval(checkUsersAgentUsageScript, {
-      keys: [generateUsersAgentUsageKey(data.userId)],
+      keys: [generateUsersAgentUsageKey(data.user.userId)],
       arguments: [agentTimeout.toString()],
     });
 
